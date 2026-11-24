@@ -25,7 +25,7 @@ Install directly from GitHub:
 dsh plugin --profile web add github:juki001/dsh-memory-curate
 ```
 
-After the npm release, you can also use:
+After the npm release, you can also install from npm:
 
 ```bash
 dsh plugin --profile web add dsh-memory-curate

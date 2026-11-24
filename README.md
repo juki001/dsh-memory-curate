@@ -25,7 +25,7 @@ Harness 的压缩引擎按 token 压力工作，默认不区分“哪段对话�
 dsh plugin --profile web add github:juki001/dsh-memory-curate
 ```
 
-发布到 npm 后也可以：
+也可以直接从 npm 安装（已发布 0.3.0）：
 
 ```bash
 dsh plugin --profile web add dsh-memory-curate
