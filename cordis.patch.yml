@@ -1,0 +1,36 @@
+# dsh-memory-curate bundle patch.
+#
+# The plugin does not own the compaction engine and does not disable it. Each
+# agent preset mounts its own isolated compaction-basic engine; the plugin
+# wraps that preset-scoped instance on `agent/created` (via
+# `agentPresets.serviceFor(agent, 'compaction')`), so the memory gates and the
+# protected 5-turn window apply to the real engine in use.
+#
+# softRatio/hardRatio are fractions of the USABLE MESSAGE BUDGET
+# (contextWindow - request maxTokens - headroomTokens), not of the raw context
+# window: a ratio above (contextWindow - maxTokens) / contextWindow can never be
+# reached, because the provider rejects the request first.
+- insert:
+    - id: memory-curate
+      name: dsh-memory-curate
+      config:
+        protectTurns: 5
+        protectToolResults: true
+        softRatio: 0.8
+        hardRatio: 0.92
+        headroomTokens: 65536
+        maxDeferSteps: 3
+        captureMode: tool-only
+        anchorDetail: 标准
+        retrievalMode: bm25
+        consolidateMode: suggest
+        namespace: default
+        defaultVisibility: shared
+        singleWriter: true
+        decayHalfLifeDays: 90
+        embedding: off
+        embeddingBaseURL: ''
+        embeddingModel: ''
+        embeddingApiKeyEnv: ''
+        embeddingWeight: 0.5
+        storePath: ''

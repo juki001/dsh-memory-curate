@@ -1,0 +1,81 @@
+{
+  "name": "dsh-memory-curate",
+  "version": "0.3.0",
+  "description": "跨对话记住偏好与项目约定；最近 5 个真人回合不被压缩；每条记忆可追溯、可修改；零配置、本地优先，支持共享与私有范围。Auditable long-term memory with five-turn compaction protection.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/ui/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "bench",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "使用说明书.md",
+    "CONTACT.md",
+    "UI-INTEGRATION.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "memory",
+    "long-term-memory",
+    "compaction",
+    "audit",
+    "zero-config",
+    "local-first",
+    "cross-session",
+    "privacy"
+  ],
+  "author": {
+    "name": "久棋科技 · 火火团队 (Jiuqi Technology · Huohuo Team)",
+    "email": "5535483@qq.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juki001/dsh-memory-curate.git"
+  },
+  "homepage": "https://github.com/juki001/dsh-memory-curate#readme",
+  "bugs": {
+    "url": "https://github.com/juki001/dsh-memory-curate/issues"
+  },
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.1.0",
+    "@deepseek-ai/schemastery": "^3.19.0",
+    "@deepseek-ai/dsh-llm": "^0.2.2-rc.1",
+    "@deepseek-ai/dsh-tools": "^0.2.2-rc.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/schemastery": { "optional": true },
+    "@deepseek-ai/dsh-llm": { "optional": true },
+    "@deepseek-ai/dsh-tools": { "optional": true }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "test": "node --import ./test/harness-resolve.mjs --test-isolation=none --test \"test/*.test.js\"",
+    "selfcheck": "node scripts/selfcheck.mjs",
+    "observe": "node scripts/observe.mjs"
+  }
+}

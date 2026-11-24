@@ -1,0 +1,584 @@
+{
+  "date": "2026-11-23",
+  "timeZone": "Asia/Shanghai",
+  "dataset": {
+    "name": "smoke-40x12",
+    "path": "bench/datasets/smoke.jsonl",
+    "form": "whole-corpus",
+    "corpora": 1
+  },
+  "environment": {
+    "os": "Windows 10.0.19044",
+    "node": "v24.22.1",
+    "arch": "x64"
+  },
+  "method": {
+    "retrieval": "bm25+tag+trigger",
+    "embedding": "off",
+    "weights": {
+      "tag": 0.35,
+      "trigger": 0.35,
+      "bm25": 0.3
+    },
+    "tokenEstimate": "ceil(code points / 4)",
+    "store": "isolated temporary NDJSON store under bench/.tmp (removed after run)"
+  },
+  "totals": {
+    "memories": 40,
+    "queries": 12,
+    "corpora": 1
+  },
+  "k": [
+    1,
+    3,
+    5,
+    10
+  ],
+  "metrics": {
+    "recall": [
+      {
+        "k": 1,
+        "value": 0.958333
+      },
+      {
+        "k": 3,
+        "value": 1
+      },
+      {
+        "k": 5,
+        "value": 1
+      },
+      {
+        "k": 10,
+        "value": 1
+      }
+    ],
+    "mrr": 1
+  },
+  "tokenSavings": {
+    "baseline": "sum of all memory texts in each query corpus",
+    "averageBaselineTokens": 212,
+    "perK": [
+      {
+        "k": 1,
+        "averageTopKTokens": 6.166667,
+        "savings": 0.970912
+      },
+      {
+        "k": 3,
+        "averageTopKTokens": 15.083333,
+        "savings": 0.928852
+      },
+      {
+        "k": 5,
+        "averageTopKTokens": 20.833333,
+        "savings": 0.90173
+      },
+      {
+        "k": 10,
+        "averageTopKTokens": 25.333333,
+        "savings": 0.880503
+      }
+    ],
+    "context": null
+  },
+  "perQuery": [
+    {
+      "corpus": "smoke-40x12",
+      "query": "安装依赖应该用哪个包管理器？",
+      "gold": [
+        "默认使用 pnpm 安装依赖，不使用 npm。"
+      ],
+      "rank": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1,
+        "10": 1
+      },
+      "topKTokens": {
+        "1": 6,
+        "3": 18,
+        "5": 18,
+        "10": 18
+      },
+      "contextTokens": null,
+      "topHits": [
+        {
+          "memory": "m01",
+          "score": 0.097692
+        },
+        {
+          "memory": "m31",
+          "score": 0.050608
+        },
+        {
+          "memory": "m27",
+          "score": 0.020159
+        }
+      ]
+    },
+    {
+      "corpus": "smoke-40x12",
+      "query": "提交代码前要跑什么测试命令？",
+      "gold": [
+        "提交前必须运行 npm test，覆盖 store 与 retrieval。"
+      ],
+      "rank": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1,
+        "10": 1
+      },
+      "topKTokens": {
+        "1": 10,
+        "3": 17,
+        "5": 28,
+        "10": 28
+      },
+      "contextTokens": null,
+      "topHits": [
+        {
+          "memory": "m02",
+          "score": 0.081538
+        },
+        {
+          "memory": "m24",
+          "score": 0.042877
+        },
+        {
+          "memory": "m23",
+          "score": 0.04133
+        },
+        {
+          "memory": "m10",
+          "score": 0.041164
+        },
+        {
+          "memory": "m21",
+          "score": 0.03575
+        }
+      ]
+    },
+    {
+      "corpus": "smoke-40x12",
+      "query": "压缩时会保护最近多少个真人回合？",
+      "gold": [
+        "最近五个真人回合不参与压缩。"
+      ],
+      "rank": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1,
+        "10": 1
+      },
+      "topKTokens": {
+        "1": 4,
+        "3": 12,
+        "5": 12,
+        "10": 12
+      },
+      "contextTokens": null,
+      "topHits": [
+        {
+          "memory": "m03",
+          "score": 0.0898
+        },
+        {
+          "memory": "m32",
+          "score": 0.088
+        },
+        {
+          "memory": "m07",
+          "score": 0.016818
+        }
+      ]
+    },
+    {
+      "corpus": "smoke-40x12",
+      "query": "记忆数据用什么格式存储？",
+      "gold": [
+        "记忆存储使用单文件 NDJSON，追加写入，不原地改写。"
+      ],
+      "rank": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1,
+        "10": 1
+      },
+      "topKTokens": {
+        "1": 7,
+        "3": 15,
+        "5": 25,
+        "10": 40
+      },
+      "contextTokens": null,
+      "topHits": [
+        {
+          "memory": "m04",
+          "score": 0.091818
+        },
+        {
+          "memory": "m06",
+          "score": 0.043323
+        },
+        {
+          "memory": "m19",
+          "score": 0.032209
+        },
+        {
+          "memory": "m34",
+          "score": 0.024788
+        },
+        {
+          "memory": "m29",
+          "score": 0.022906
+        },
+        {
+          "memory": "m37",
+          "score": 0.021287
+        },
+        {
+          "memory": "m07",
+          "score": 0.021287
+        },
+        {
+          "memory": "m14",
+          "score": 0.014227
+        }
+      ]
+    },
+    {
+      "corpus": "smoke-40x12",
+      "query": "召回分数由哪些信号组成？",
+      "gold": [
+        "检索使用标签、触发词和 BM25 三路分数加权。"
+      ],
+      "rank": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1,
+        "10": 1
+      },
+      "topKTokens": {
+        "1": 6,
+        "3": 17,
+        "5": 22,
+        "10": 22
+      },
+      "contextTokens": null,
+      "topHits": [
+        {
+          "memory": "m05",
+          "score": 0.079091
+        },
+        {
+          "memory": "m33",
+          "score": 0.027829
+        },
+        {
+          "memory": "m35",
+          "score": 0.026705
+        },
+        {
+          "memory": "m30",
+          "score": 0.025709
+        }
+      ]
+    },
+    {
+      "corpus": "smoke-40x12",
+      "query": "删除记忆时会物理删除原行吗？",
+      "gold": [
+        "删除记忆只追加墓碑行，不物理删除。"
+      ],
+      "rank": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1,
+        "10": 1
+      },
+      "topKTokens": {
+        "1": 5,
+        "3": 13,
+        "5": 20,
+        "10": 20
+      },
+      "contextTokens": null,
+      "topHits": [
+        {
+          "memory": "m06",
+          "score": 0.095
+        },
+        {
+          "memory": "m29",
+          "score": 0.015117
+        },
+        {
+          "memory": "m07",
+          "score": 0.014208
+        },
+        {
+          "memory": "m04",
+          "score": 0.013136
+        }
+      ]
+    },
+    {
+      "corpus": "smoke-40x12",
+      "query": "锚点最多允许多少字符？",
+      "gold": [
+        "锚点文本不超过 400 个字符。"
+      ],
+      "rank": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1,
+        "10": 1
+      },
+      "topKTokens": {
+        "1": 4,
+        "3": 17,
+        "5": 17,
+        "10": 17
+      },
+      "contextTokens": null,
+      "topHits": [
+        {
+          "memory": "m13",
+          "score": 0.081
+        },
+        {
+          "memory": "m35",
+          "score": 0.029164
+        },
+        {
+          "memory": "m15",
+          "score": 0.02466
+        }
+      ]
+    },
+    {
+      "corpus": "smoke-40x12",
+      "query": "工具结果折叠保留头部和尾部多少字符？",
+      "gold": [
+        "工具结果折叠采用头 4096、标记 39、尾 1024 字符。"
+      ],
+      "rank": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1,
+        "10": 1
+      },
+      "topKTokens": {
+        "1": 8,
+        "3": 18,
+        "5": 23,
+        "10": 23
+      },
+      "contextTokens": null,
+      "topHits": [
+        {
+          "memory": "m15",
+          "score": 0.080588
+        },
+        {
+          "memory": "m13",
+          "score": 0.014055
+        },
+        {
+          "memory": "m14",
+          "score": 0.009559
+        },
+        {
+          "memory": "m30",
+          "score": 0.008478
+        }
+      ]
+    },
+    {
+      "corpus": "smoke-40x12",
+      "query": "What are the fixed k1 and b values for BM25?",
+      "gold": [
+        "BM25 参数固定为 k1=1.2、b=0.75。"
+      ],
+      "rank": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1,
+        "10": 1
+      },
+      "topKTokens": {
+        "1": 7,
+        "3": 19,
+        "5": 24,
+        "10": 24
+      },
+      "contextTokens": null,
+      "topHits": [
+        {
+          "memory": "m17",
+          "score": 0.095
+        },
+        {
+          "memory": "m33",
+          "score": 0.041935
+        },
+        {
+          "memory": "m05",
+          "score": 0.026719
+        },
+        {
+          "memory": "m20",
+          "score": 0.007
+        }
+      ]
+    },
+    {
+      "corpus": "smoke-40x12",
+      "query": "How does the tokenizer handle CJK text?",
+      "gold": [
+        "CJK 文本按 2-gram 加整段方式分词。"
+      ],
+      "rank": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1,
+        "10": 1
+      },
+      "topKTokens": {
+        "1": 6,
+        "3": 6,
+        "5": 6,
+        "10": 6
+      },
+      "contextTokens": null,
+      "topHits": [
+        {
+          "memory": "m16",
+          "score": 0.07
+        }
+      ]
+    },
+    {
+      "corpus": "smoke-40x12",
+      "query": "如何覆盖默认的数据目录？",
+      "gold": [
+        "开发环境通过 DSH_HOME 指定数据目录。"
+      ],
+      "rank": 1,
+      "recall": {
+        "1": 1,
+        "3": 1,
+        "5": 1,
+        "10": 1
+      },
+      "topKTokens": {
+        "1": 6,
+        "3": 13,
+        "5": 25,
+        "10": 52
+      },
+      "contextTokens": null,
+      "topHits": [
+        {
+          "memory": "m34",
+          "score": 0.079091
+        },
+        {
+          "memory": "m19",
+          "score": 0.030952
+        },
+        {
+          "memory": "m23",
+          "score": 0.02998
+        },
+        {
+          "memory": "m22",
+          "score": 0.024849
+        },
+        {
+          "memory": "m02",
+          "score": 0.021427
+        },
+        {
+          "memory": "m04",
+          "score": 0.019921
+        },
+        {
+          "memory": "m31",
+          "score": 0.015476
+        },
+        {
+          "memory": "m35",
+          "score": 0.014679
+        },
+        {
+          "memory": "m01",
+          "score": 0.014311
+        }
+      ]
+    },
+    {
+      "corpus": "smoke-40x12",
+      "query": "召回结果为什么要带 why 字段，它和检索信号有什么关系？",
+      "gold": [
+        "召回结果必须包含 why 字段以便审计。",
+        "检索使用标签、触发词和 BM25 三路分数加权。"
+      ],
+      "rank": 1,
+      "recall": {
+        "1": 0.5,
+        "3": 1,
+        "5": 1,
+        "10": 1
+      },
+      "topKTokens": {
+        "1": 5,
+        "3": 16,
+        "5": 30,
+        "10": 42
+      },
+      "contextTokens": null,
+      "topHits": [
+        {
+          "memory": "m30",
+          "score": 0.073333
+        },
+        {
+          "memory": "m05",
+          "score": 0.03826
+        },
+        {
+          "memory": "m35",
+          "score": 0.023572
+        },
+        {
+          "memory": "m15",
+          "score": 0.013913
+        },
+        {
+          "memory": "m33",
+          "score": 0.01372
+        },
+        {
+          "memory": "m17",
+          "score": 0.011567
+        },
+        {
+          "memory": "m25",
+          "score": 0.01058
+        }
+      ]
+    }
+  ]
+}
