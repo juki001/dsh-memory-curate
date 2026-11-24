@@ -1,19 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - **Open-source packaging.** Added repository/homepage/bugs metadata, `.gitignore`, `SECURITY.md`, `CONTRIBUTING.md`, and a GitHub install command; npm packaging remains a separate publish step.
 - **Plugin-list metadata resolves.** The package now exports `./package.json`, so the plugin manager's `readPluginMeta` can read the manifest instead of returning no metadata. The description is a benefit-led Chinese-first line (cross-session memory, five-turn compaction protection, audit/edit, zero-config local-first, shared/private scopes) with an English fallback; the settings list can show it after refresh.
-- **Compaction never starts on the protected system head.** A pressure-triggered compaction computed its range as `surface[0]..window.startIndex-1`; when node 0 is the session's `system/message`, the host engine appended `compaction/summary` first and only then refused the surface replacement (`node 0 holds the system prompt`). The already-written summary shadowed the protected head, so every later resume failed with `SessionFormatError: compaction cannot shadow the protected system head`. Ranges now start at node 1 (`protectedHeadSeq` in `window.js`, used by the pressure path, `selectCompactionRegion` and the `compactRegion` wrapper, which fails closed before any summary exists). Tests: 105.
+- **Compaction never starts on the protected system head.** A pressure-triggered compaction computed its range as `surface[0]..window.startIndex-1`; when node 0 is the session's `system/message`, the host engine appended `compaction/summary` first and only then refused the surface replacement (`node 0 holds the system prompt`). The already-written summary shadowed the protected head, so every later resume failed with `SessionFormatError: compaction cannot shadow the protected system head`. Ranges now start at node 1 (`protectedHeadSeq` in `window.js`, used by the pressure path, `selectCompactionRegion` and the `compactRegion` wrapper, which fails closed before any summary exists).
 - **Stale/reversed compaction ranges fail closed.** A rewritten surface can hand the wrapper a range whose start is no longer before its end (observed as `start:83,end:34` after a system-head refresh). The wrapper used to delegate that range to the host, allowing a summary commit before the replacement guard failed. It now audits `invalid-region-order` or `region-not-on-surface` and returns `null` before the engine runs. Tests: 108.
-
-## 0.3.0
-
 - **Local multi-agent scopes.** Memory and suggestion rows now carry `namespace`, `owner` (writing session) and `visibility` (`private` / `shared` / `open`). Recall, trace, duplicate detection, consolidation, anchor text and compaction gates all filter through the calling agent's scope; the local settings UI acts as a trusted admin and can see every namespace.
 - **Write permissions.** `shared` rows are readable by the namespace but editable only by their owner; `open` rows are editable by any agent in the namespace; `private` rows are visible only to the owner (and the UI admin). Legacy v2 rows load as ownerless `shared` and remain writable for migration.
 - **Single-writer lock.** `singleWriter` (default true) creates `<store>.lock` before opening; a second DSH process degrades to read-only instead of appending to the same NDJSON. Stale locks are reclaimed only when the recorded PID is gone (same-host check) or the lock is older than 60s and its owner cannot be verified; the release checks its random token.
 - **Audit actor.** Write, recall, update, delete, consolidate and anchor rows record `actor` (`session`/`ui`/`system`) plus namespace/visibility where relevant.
-- Memory row schema v3 (additive). Tests: 102.
+- Memory row schema v3 (additive).
 - User-facing bilingual `使用说明书.md`, organized around common memory-product pain points (lost context, duplicate/stale memories, lack of control, privacy, setup complexity) without implementation details.
 - Team contact metadata (`CONTACT.md`, package author, README/guide contact sections): Jiuqi Technology · Huohuo Team, Mars.
 
