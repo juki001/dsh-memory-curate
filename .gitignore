@@ -1,5 +1,7 @@
 node_modules/
 .npm-cache/
+.npm-token
+.npmrc
 *.tgz
 *.log
 .DS_Store
