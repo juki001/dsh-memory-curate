@@ -16,6 +16,7 @@ Harness 的压缩引擎按 token 压力工作，默认不区分“哪段对话�
 - **最近 5 个人类回合不动**：窗口按真实 `source.kind === 'user'` 消息计算，长回合整体保护。
 - **系统提示头不动**：v4 会话的 `system/message` 固定占 surface 节点 0（受保护的系统头），本插件计算的压缩区间从节点 1 起；包装层在区间起点落在节点 0 时直接拒绝，避免宿主先落盘摘要、再拒绝对 surface 的替换，把摘要留成一份遮蔽系统头的坏记录。
 - **全部可审计**：写入、更新、删除、召回、折叠、压缩、过期、合并建议、提示版本变更都追加审计行，永不覆盖旧行。
+- **审计不会无限撑大主文件**：超过 `auditArchiveBytes`（默认 50 MB）时，最旧审计滚动到 `<store>.archive/`，主库保留最新约 20%；`trace` 仍会跨归档读取，并可用 `retain_audit` 永久保留关键决策行。
 
 ## 安装
 
@@ -25,7 +26,7 @@ Harness 的压缩引擎按 token 压力工作，默认不区分“哪段对话�
 dsh plugin --profile web add github:juki001/dsh-memory-curate
 ```
 
-也可以直接从 npm 安装（已发布 0.3.0）：
+也可以直接从 npm 安装（已发布 0.3.1）：
 
 ```bash
 dsh plugin --profile web add dsh-memory-curate
@@ -61,6 +62,7 @@ dsh plugin --profile web add dsh-memory-curate
 | `decayHalfLifeDays` | 90 | 召回排序的时间衰减半衰期；0 关闭衰减 |
 | `embedding` | off | 兼容项：`auto` 等价于 `retrievalMode=hybrid` |
 | `storePath` | 空 | 留空用 `$DSH_HOME/data/memory-curate/memory-curate.ndjson` |
+| `auditArchiveBytes` | 50 MB | 审计主文件超过该字节数后，把最旧审计滚动到 `<store>.archive/`；范围 1 MB–1 GB |
 
 `softRatio` 必须小于 `hardRatio`，否则插件拒绝加载。
 

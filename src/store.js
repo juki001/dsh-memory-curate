@@ -1,6 +1,6 @@
-import { promises as fs } from 'node:fs'
-import { dirname } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { promises as fs, readFileSync, readdirSync, statSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
 import { normalizeNamespace, normalizeVisibility } from './scope.js'
 
 /**
@@ -28,15 +28,26 @@ export class MemoryStore {
   #lastUsed = new Map()
   #lastUsedRows = -1
   #readOnly = false
+  #archiveDir
+  #archiveBytes
+  #archiveCache = new Map()
 
   constructor(filePath, options = {}) {
     this.#filePath = filePath
     this.#now = options.now ?? (() => new Date().toISOString())
     this.#logger = options.logger
     this.#readOnly = options.readOnly === true
+    this.#archiveBytes = Number.isFinite(options.archiveBytes) && options.archiveBytes > 0
+      ? options.archiveBytes
+      : 50 * 1024 * 1024
+    this.#archiveDir = typeof options.archiveDir === 'string' && options.archiveDir.length > 0
+      ? options.archiveDir
+      : `${filePath}.archive`
   }
 
   get filePath () { return this.#filePath }
+  get archiveDir () { return this.#archiveDir }
+  get archiveBytes () { return this.#archiveBytes }
   get revision () { return this.#revision }
   get activePromptVersion () { return this.#activePromptVersion }
 
@@ -311,7 +322,8 @@ export class MemoryStore {
     if (this.#lastUsedRows === this.#rows.length) return this.#lastUsed
     const map = new Map()
     for (const row of this.#rows) {
-      if (row.kind !== 'audit' || row.op !== 'recall') continue
+      if (row.kind !== 'audit') continue
+      if (row.op !== 'recall' && row.op !== 'recall_summary') continue
       const ids = Array.isArray(row.returned)
         ? row.returned
         : Array.isArray(row.hits) ? row.hits.map((hit) => hit?.id) : []
@@ -330,22 +342,264 @@ export class MemoryStore {
     return this.#rows.filter((row) => row.kind === 'audit')
   }
 
-  /** Chronological record for one memory id: row, its audits, and recall hits. */
+  /** Append-only permission marker: keep one audit row (and its decision group)
+   * forever even after the archive threshold is crossed. */
+  async retainAudit (auditId, input = {}) {
+    if (typeof auditId !== 'string' || auditId.length === 0) {
+      throw Object.assign(new Error('auditId is required'), { code: 'INVALID_ARGUMENT' })
+    }
+    const target = this.#rows.find((row) => row.kind === 'audit' && row.id === auditId)
+    if (target === undefined) {
+      throw Object.assign(new Error(`audit not found in the active store: ${auditId}`), { code: 'AUDIT_NOT_FOUND' })
+    }
+    return this.audit('retain', {
+      targetAuditId: auditId,
+      retention: 'permanent',
+      reason: input.reason ?? '',
+      actor: input.actor ?? null
+    })
+  }
+
+  /** Roll the oldest audit rows into an immutable archive segment when the
+   * active NDJSON exceeds `archiveBytes`. `force` is for the admin action and
+   * tests; it still keeps the newest ~20% inside the active store. */
+  async maybeArchive ({ force = false } = {}) {
+    if (this.#readOnly) {
+      return { ok: false, reason: 'read-only' }
+    }
+    const run = this.#queue.then(async () => {
+      let fileBytes = 0
+      try {
+        fileBytes = (await fs.stat(this.#filePath)).size
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+      if (!force && fileBytes <= this.#archiveBytes) {
+        return {
+          ok: true,
+          skipped: 'below-threshold',
+          fileBytes,
+          threshold: this.#archiveBytes,
+          archive: this.#archiveStatsSync()
+        }
+      }
+      return this.#archiveNow()
+    })
+    this.#queue = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  async #archiveNow () {
+    const auditRows = this.auditRows()
+    const sizes = new Map()
+    let auditBytes = 0
+    for (const row of auditRows) {
+      const size = Buffer.byteLength(JSON.stringify(row) + '\n', 'utf8')
+      sizes.set(row.id, size)
+      auditBytes += size
+    }
+    const keepBudget = Math.max(1, Math.floor(this.#archiveBytes * 0.8))
+    if (auditBytes <= keepBudget) {
+      return {
+        ok: true,
+        skipped: 'below-retention-budget',
+        auditBytes,
+        keepBudget,
+        threshold: this.#archiveBytes,
+        archive: this.#archiveStatsSync()
+      }
+    }
+
+    const permanent = this.#permanentAuditIds(auditRows)
+    const candidates = []
+    let remaining = auditBytes
+    for (const row of auditRows) {
+      if (remaining <= keepBudget) break
+      if (permanent.has(row.id)) continue
+      if (row.op === 'retain' || row.op === 'recall_summary') continue
+      candidates.push(row)
+      remaining -= sizes.get(row.id) ?? 0
+    }
+    if (candidates.length === 0) {
+      return { ok: true, skipped: 'no-eligible-audit', auditBytes, keepBudget, permanent: permanent.size }
+    }
+
+    const now = this.#now()
+    const stamp = now.replace(/[:.]/g, '-')
+    const segment = `audit-${stamp}-${randomUUID().slice(0, 8)}.ndjson`
+    const segmentPath = join(this.#archiveDir, segment)
+    const manifestPath = `${segmentPath}.manifest.json`
+    const content = candidates.map((row) => JSON.stringify(row) + '\n').join('')
+    const bytes = Buffer.byteLength(content, 'utf8')
+    const sha256 = createHash('sha256').update(content).digest('hex')
+    await fs.mkdir(this.#archiveDir, { recursive: true })
+    const segmentTemp = `${segmentPath}.tmp`
+    await fs.writeFile(segmentTemp, content, 'utf8')
+    await fs.rename(segmentTemp, segmentPath)
+    const manifest = {
+      kind: 'memory_curate_audit_manifest',
+      version: 1,
+      file: segment,
+      rows: candidates.length,
+      bytes,
+      firstTs: candidates[0]?.ts ?? null,
+      lastTs: candidates.at(-1)?.ts ?? null,
+      sha256,
+      createdAt: now,
+      threshold: this.#archiveBytes,
+      keepBudget
+    }
+    await fs.writeFile(manifestPath, JSON.stringify(manifest) + '\n', 'utf8')
+
+    const remove = new Set(candidates.map((row) => row.id))
+    const keepRows = this.#rows.filter((row) => !(row.kind === 'audit' && remove.has(row.id)))
+    this.#appendRecallSummaries(keepRows, candidates, auditRows)
+    const archiveRow = {
+      kind: 'audit',
+      id: 'a_' + randomUUID(),
+      ts: now,
+      op: 'archive',
+      decision: 'archived',
+      count: candidates.length,
+      bytes,
+      sha256,
+      archiveFile: segment,
+      threshold: this.#archiveBytes,
+      keepBudget,
+      reason: 'audit-size'
+    }
+    keepRows.push(archiveRow)
+
+    const mainTemp = `${this.#filePath}.archive-tmp-${randomUUID().slice(0, 8)}`
+    const mainContent = keepRows.map((row) => JSON.stringify(row) + '\n').join('')
+    await fs.writeFile(mainTemp, mainContent, 'utf8')
+    await fs.rename(mainTemp, this.#filePath)
+    this.#rows = keepRows
+    this.#lastUsedRows = -1
+    this.#archiveCache.clear()
+    this.#logger?.info?.(`memory-curate: archived ${candidates.length} audit row(s) (${bytes} bytes) to ${segment}`)
+    return {
+      ok: true,
+      archived: candidates.length,
+      bytes,
+      sha256,
+      archiveFile: segment,
+      auditBytesAfter: remaining,
+      keepBudget,
+      threshold: this.#archiveBytes,
+      archive: this.#archiveStatsSync()
+    }
+  }
+
+  #permanentAuditIds (auditRows) {
+    const permanent = new Set()
+    for (const row of auditRows) {
+      if (row.retention === 'permanent') permanent.add(row.id)
+      if (row.op === 'retain' && typeof row.targetAuditId === 'string') permanent.add(row.targetAuditId)
+    }
+    return permanent
+  }
+
+  #appendRecallSummaries (keepRows, candidates, auditRows) {
+    const latestRecall = new Map()
+    for (const row of auditRows) {
+      if (row.op !== 'recall' && row.op !== 'recall_summary') continue
+      const ids = Array.isArray(row.returned)
+        ? row.returned
+        : Array.isArray(row.hits) ? row.hits.map((hit) => hit?.id) : []
+      for (const id of ids) {
+        if (typeof id !== 'string') continue
+        const previous = latestRecall.get(id)
+        if (previous === undefined || Date.parse(row.ts) > Date.parse(previous.ts)) latestRecall.set(id, row)
+      }
+    }
+    const removed = new Set(candidates.map((row) => row.id))
+    for (const [id, row] of latestRecall) {
+      if (!removed.has(row.id)) continue
+      keepRows.push({
+        kind: 'audit',
+        id: 'a_' + randomUUID(),
+        ts: row.ts,
+        op: 'recall_summary',
+        returned: [id],
+        retention: 'permanent',
+        reason: 'archived recall summary'
+      })
+    }
+  }
+
+  #archiveStatsSync () {
+    try {
+      const files = readdirSync(this.#archiveDir).filter((name) => name.endsWith('.ndjson'))
+      let bytes = 0
+      let rows = 0
+      for (const file of files) {
+        try {
+          const full = join(this.#archiveDir, file)
+          bytes += statSync(full).size
+          const manifest = JSON.parse(readFileSync(`${full}.manifest.json`, 'utf8'))
+          rows += Number.isInteger(manifest.rows) ? manifest.rows : 0
+        } catch {
+          // A segment without a readable manifest is still counted by bytes.
+        }
+      }
+      return { dir: this.#archiveDir, files: files.length, rows, bytes }
+    } catch (error) {
+      if (error.code === 'ENOENT') return { dir: this.#archiveDir, files: 0, rows: 0, bytes: 0 }
+      throw error
+    }
+  }
+
+  #archivedAuditRowsSync () {
+    try {
+      const files = readdirSync(this.#archiveDir).filter((name) => name.endsWith('.ndjson'))
+      const out = []
+      for (const file of files) {
+        const full = join(this.#archiveDir, file)
+        const stat = statSync(full)
+        const key = `${full}:${stat.mtimeMs}:${stat.size}`
+        let rows = this.#archiveCache.get(key)
+        if (rows === undefined) {
+          rows = []
+          for (const line of readFileSync(full, 'utf8').split('\n')) {
+            if (line.trim().length === 0) continue
+            try {
+              const row = JSON.parse(line)
+              if (row?.kind === 'audit') rows.push({ ...row, archived: true })
+            } catch {
+              // Ignore a torn tail; the manifest still records the segment.
+            }
+          }
+          this.#archiveCache.set(key, rows)
+        }
+        out.push(...rows)
+      }
+      return out
+    } catch (error) {
+      if (error.code === 'ENOENT') return []
+      throw error
+    }
+  }
+
+  /** Chronological record for one memory id: row, its audits, and recall hits.
+   * Archived audit segments are read lazily so normal startup stays bounded. */
   traceMemory (memoryId) {
-    return this.#rows.filter((row) => {
+    const matches = (row) => {
       if (row.kind === 'memory' && (row.id === memoryId || row.supersedes === memoryId)) return true
       if (row.kind === 'memory_tombstone' && row.targetId === memoryId) return true
       if (row.kind === 'audit') {
         if (row.memoryId === memoryId || row.targetId === memoryId) return true
         if (Array.isArray(row.hits) && row.hits.some((hit) => hit?.id === memoryId)) return true
+        if (Array.isArray(row.returned) && row.returned.includes(memoryId)) return true
       }
       return false
-    })
+    }
+    return mergeTraceRows(this.#rows.filter(matches), this.#archivedAuditRowsSync().filter(matches))
   }
 
   /** Chronological record for one session seq: prune/compact audits and citing memories. */
   traceSeq (sessionId, seq) {
-    return this.#rows.filter((row) => {
+    const matches = (row) => {
       const source = row.source
       if (row.kind === 'memory' && source?.sessionId === sessionId && Array.isArray(source.seqs) && source.seqs.includes(seq)) return true
       if (row.kind === 'audit' && row.sessionId === sessionId) {
@@ -354,7 +608,8 @@ export class MemoryStore {
         if (row.seq === seq) return true
       }
       return false
-    })
+    }
+    return mergeTraceRows(this.#rows.filter(matches), this.#archivedAuditRowsSync().filter(matches))
   }
 
   stats () {
@@ -367,7 +622,8 @@ export class MemoryStore {
       prompts: this.#prompts.size,
       suggestions: this.suggestions('proposed').length,
       activePromptVersion: this.#activePromptVersion ?? null,
-      revision: this.#revision
+      revision: this.#revision,
+      archive: this.#archiveStatsSync()
     }
   }
 
@@ -437,6 +693,20 @@ function normalizeSupersedes (value) {
     if (id.length > 0 && !out.includes(id)) out.push(id)
   }
   return out
+}
+
+function mergeTraceRows (current, archived) {
+  const byId = new Map()
+  for (const row of [...archived, ...current]) {
+    if (row.kind === 'audit' && typeof row.id === 'string') byId.set(row.id, row)
+  }
+  const memoryRows = [...current, ...archived].filter((row) => row.kind !== 'audit')
+  return [...memoryRows, ...byId.values()].sort((left, right) => {
+    const leftTime = Date.parse(left.ts ?? '')
+    const rightTime = Date.parse(right.ts ?? '')
+    if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) return leftTime - rightTime
+    return 0
+  })
 }
 
 function clampImportance (value) {

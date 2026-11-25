@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+
+- **Audit logs roll by size, not age.** When the active NDJSON exceeds `auditArchiveBytes` (default 50 MB), the oldest audit rows move to `<store>.archive/audit-*.ndjson` and the active store keeps the newest ~20%. The 50 MB default comes from a synthetic startup benchmark: 50 MB opens in ~515 ms with ~72 MB RSS, while 100 MB takes ~1.05 s. Memories, retrieval, compaction and the five-turn protection are untouched.
+- **Permanent audit marker.** `memory_curate_admin` gains `retain_audit` (with `auditId` and optional `reason`); a retained audit row and its decision group are never rolled out. A new `archive` action forces one roll for testing/administration. The `stats` output reports archive files, rows and bytes.
+- **Trace spans archives.** `traceMemory` / `traceSeq` lazily read archive segments and mark their rows `archived: true`; a `recall_summary` permanent row preserves the latest `lastUsedAt` after recall audits move out. Archive manifests carry row count, byte count, time range and sha256.
+- **Packaging fix.** The user guide is back at the filename the README, selfcheck and npm `files` list expect (`使用说明书.md`), so it is included in the tarball and links resolve.
+- Tests: 112.
+
 ## 0.3.0
 
 - **Open-source packaging.** Added repository/homepage/bugs metadata, `.gitignore`, `SECURITY.md`, `CONTRIBUTING.md`, and GitHub/npm install commands; npm package `dsh-memory-curate@0.3.0` is published.

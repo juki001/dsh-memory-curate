@@ -82,7 +82,9 @@ export const Config = Schema.object({
   headroomTokens: Schema.number().step(1024).min(0).max(1048576).default(65536)
     .description('压缩压力预算里预留给摘要调用与波动的 token 数').volatile(),
   storePath: Schema.string().default('')
-    .description('自定义 NDJSON 路径；留空使用 DSH_HOME/data/memory-curate/').volatile()
+    .description('自定义 NDJSON 路径；留空使用 DSH_HOME/data/memory-curate/').volatile(),
+  auditArchiveBytes: Schema.number().step(1048576).min(1048576).max(1073741824).default(50 * 1024 * 1024)
+    .description('审计日志滚动归档阈值（字节）；超过后把最旧审计迁到 <store>.archive/，默认 50 MB').volatile()
 })
 
 function resolveStorePath (configured) {
@@ -1361,6 +1363,11 @@ export class CurateService extends Service {
   async beforeStep (agent, signal) {
     if (!this.enabled) return
     await this.attach(agent)
+    try {
+      if (typeof this.store.maybeArchive === 'function') await this.store.maybeArchive()
+    } catch (error) {
+      this.ctx.logger?.warn?.(`memory-curate: audit archive failed: ${error?.message ?? error}`)
+    }
     await this.ensurePrompt(agent, signal)
     const session = agent?.session
     if (session !== undefined) {
@@ -1422,7 +1429,7 @@ export class CurateService extends Service {
 
   /* ------------------------------------------------------------------ admin */
 
-  async admin ({ action, version, memoryId, suggestionId, text, status, agent }) {
+  async admin ({ action, version, memoryId, suggestionId, text, status, auditId, reason, agent }) {
     if (!this.enabled) throw Object.assign(new Error('memory store unavailable'), { code: 'STORE_UNAVAILABLE' })
     switch (action) {
       case 'stats':
@@ -1459,6 +1466,13 @@ export class CurateService extends Service {
       case 'dismiss_suggestion':
         if (typeof suggestionId !== 'string') throw Object.assign(new Error('suggestionId is required'), { code: 'INVALID_ARGUMENT' })
         return this.dismissSuggestion({ suggestionId, agent })
+      case 'retain_audit':
+        if (this.readOnly) throw Object.assign(new Error('memory store is read-only'), { code: 'STORE_READ_ONLY' })
+        if (typeof auditId !== 'string') throw Object.assign(new Error('auditId is required'), { code: 'INVALID_ARGUMENT' })
+        return { ok: true, audit: await this.store.retainAudit(auditId, { reason: reason ?? 'admin retain', actor: actorOf(agent) }) }
+      case 'archive':
+        if (this.readOnly) throw Object.assign(new Error('memory store is read-only'), { code: 'STORE_READ_ONLY' })
+        return this.store.maybeArchive({ force: true })
       default:
         throw Object.assign(new Error(`unknown admin action: ${action}`), { code: 'INVALID_ARGUMENT' })
     }
@@ -1620,7 +1634,8 @@ export async function apply (ctx, config = {}) {
   try {
     store = await MemoryStore.open(storeFile, {
       logger: ctx.logger,
-      readOnly: lock !== null && !lock.ok
+      readOnly: lock !== null && !lock.ok,
+      archiveBytes: resolved.auditArchiveBytes
     })
   } catch (error) {
     storeError = error
@@ -1840,14 +1855,16 @@ async function registerTools (ctx, service) {
 
   ctx.tools.register(defineTool({
     name: 'memory_curate_admin',
-    description: 'Operate the memory store: stats, show/regenerate/roll back the self-generated prompt, delete a memory (append-only tombstone), or review consolidation proposals (suggestions) — apply_suggestion merges overlapping or contradictory rows by appending a superseding memory; dismiss_suggestion closes one without writing.',
+    description: 'Operate the memory store: stats, show/regenerate/roll back the self-generated prompt, delete a memory (append-only tombstone), review consolidation proposals (suggestions), mark one audit row as permanently retained, or force an audit archive roll. apply_suggestion merges overlapping or contradictory rows by appending a superseding memory; dismiss_suggestion closes one without writing.',
     parameters: {
-      action: { type: 'string', description: 'stats | prompt_show | prompt_regenerate | prompt_rollback | delete | suggestions | apply_suggestion | dismiss_suggestion' },
+      action: { type: 'string', description: 'stats | prompt_show | prompt_regenerate | prompt_rollback | delete | suggestions | apply_suggestion | dismiss_suggestion | retain_audit | archive' },
       version: { type: 'string', description: 'Prompt version for prompt_show/prompt_rollback.' },
       memoryId: { type: 'string', description: 'Memory id for delete.' },
       suggestionId: { type: 'string', description: 'Suggestion id for apply_suggestion/dismiss_suggestion.' },
       text: { type: 'string', description: 'Optional merged text for apply_suggestion; omit to use the stored proposal.' },
-      status: { type: 'string', description: 'Suggestion filter: proposed (default), applied, dismissed, all.' }
+      status: { type: 'string', description: 'Suggestion filter: proposed (default), applied, dismissed, all.' },
+      auditId: { type: 'string', description: 'Audit row id for retain_audit.' },
+      reason: { type: 'string', description: 'Reason for retain_audit.' }
     },
     output,
     async execute (args, exec) {
@@ -1859,6 +1876,8 @@ async function registerTools (ctx, service) {
           suggestionId: args.suggestionId,
           text: args.text,
           status: args.status,
+          auditId: args.auditId,
+          reason: args.reason,
           agent: exec?.agent
         })
       } catch (error) {
