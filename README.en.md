@@ -16,7 +16,7 @@ The Harness compaction engine works on token pressure and does not distinguish "
 - **The last five human turns are never touched**: the window is anchored on real `source.kind === 'user'` messages; a long turn is protected as a whole.
 - **The system head is never touched**: a v4 session keeps its `system/message` at surface node 0; the plugin's ranges start at node 1, and the `compactRegion` wrapper refuses any span that starts on node 0. The host commits `compaction/summary` before it applies the surface replacement, so a span from node 0 would leave a summary that shadows the protected head and breaks every later resume.
 - **Everything is audited**: writes, updates, deletes, recalls, prune folds, compactions, expirations, consolidation proposals and prompt version changes append audit rows; old rows are never rewritten.
-- **Audit growth is bounded**: when the active NDJSON exceeds `auditArchiveBytes` (50 MB by default), the oldest audits roll into `<store>.archive/` while the active store keeps the newest ~20%. `trace` still reads across archives; `retain_audit` pins a critical decision row.
+- **Audit growth is bounded**: when the active NDJSON exceeds `auditArchiveBytes` (50 MB by default), the oldest audits roll into `<store>.archive/` at `auditArchiveRollRatio` (40% by default), leaving about 60% hot. `trace` still reads across archives; `retain_audit` pins a critical decision row.
 
 ## Install
 
@@ -63,6 +63,7 @@ Every option is a `volatile()` field, so the DSH settings page renders a control
 | `embedding` | off | Compatibility switch: `auto` means `retrievalMode=hybrid` |
 | `storePath` | empty | Empty uses `$DSH_HOME/data/memory-curate/memory-curate.ndjson` |
 | `auditArchiveBytes` | 50 MB | When the audit-bearing store exceeds this size, oldest audits roll into `<store>.archive/`; range 1 MB–1 GB |
+| `auditArchiveRollRatio` | 0.40 | Fraction of current audit bytes moved per roll; 40% by default, leaving about 60% hot |
 
 `softRatio` must stay below `hardRatio` or the plugin refuses to load.
 

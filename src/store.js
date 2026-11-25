@@ -30,6 +30,7 @@ export class MemoryStore {
   #readOnly = false
   #archiveDir
   #archiveBytes
+  #archiveRollRatio
   #archiveCache = new Map()
 
   constructor(filePath, options = {}) {
@@ -40,6 +41,9 @@ export class MemoryStore {
     this.#archiveBytes = Number.isFinite(options.archiveBytes) && options.archiveBytes > 0
       ? options.archiveBytes
       : 50 * 1024 * 1024
+    this.#archiveRollRatio = Number.isFinite(options.archiveRollRatio) && options.archiveRollRatio > 0 && options.archiveRollRatio < 1
+      ? options.archiveRollRatio
+      : 0.4
     this.#archiveDir = typeof options.archiveDir === 'string' && options.archiveDir.length > 0
       ? options.archiveDir
       : `${filePath}.archive`
@@ -48,6 +52,7 @@ export class MemoryStore {
   get filePath () { return this.#filePath }
   get archiveDir () { return this.#archiveDir }
   get archiveBytes () { return this.#archiveBytes }
+  get archiveRollRatio () { return this.#archiveRollRatio }
   get revision () { return this.#revision }
   get activePromptVersion () { return this.#activePromptVersion }
 
@@ -398,30 +403,19 @@ export class MemoryStore {
       sizes.set(row.id, size)
       auditBytes += size
     }
-    const keepBudget = Math.max(1, Math.floor(this.#archiveBytes * 0.8))
-    if (auditBytes <= keepBudget) {
-      return {
-        ok: true,
-        skipped: 'below-retention-budget',
-        auditBytes,
-        keepBudget,
-        threshold: this.#archiveBytes,
-        archive: this.#archiveStatsSync()
-      }
-    }
-
+    const archiveTarget = Math.max(1, Math.floor(auditBytes * this.#archiveRollRatio))
     const permanent = this.#permanentAuditIds(auditRows)
     const candidates = []
-    let remaining = auditBytes
+    let archivedBytes = 0
     for (const row of auditRows) {
-      if (remaining <= keepBudget) break
+      if (archivedBytes >= archiveTarget) break
       if (permanent.has(row.id)) continue
       if (row.op === 'retain' || row.op === 'recall_summary') continue
       candidates.push(row)
-      remaining -= sizes.get(row.id) ?? 0
+      archivedBytes += sizes.get(row.id) ?? 0
     }
     if (candidates.length === 0) {
-      return { ok: true, skipped: 'no-eligible-audit', auditBytes, keepBudget, permanent: permanent.size }
+      return { ok: true, skipped: 'no-eligible-audit', auditBytes, archiveTarget, permanent: permanent.size }
     }
 
     const now = this.#now()
@@ -447,7 +441,8 @@ export class MemoryStore {
       sha256,
       createdAt: now,
       threshold: this.#archiveBytes,
-      keepBudget
+      rollRatio: this.#archiveRollRatio,
+      archiveTarget
     }
     await fs.writeFile(manifestPath, JSON.stringify(manifest) + '\n', 'utf8')
 
@@ -465,7 +460,7 @@ export class MemoryStore {
       sha256,
       archiveFile: segment,
       threshold: this.#archiveBytes,
-      keepBudget,
+      rollRatio: this.#archiveRollRatio,
       reason: 'audit-size'
     }
     keepRows.push(archiveRow)
@@ -484,8 +479,10 @@ export class MemoryStore {
       bytes,
       sha256,
       archiveFile: segment,
-      auditBytesAfter: remaining,
-      keepBudget,
+      auditBytesBefore: auditBytes,
+      auditBytesAfter: auditBytes - archivedBytes,
+      archiveTarget,
+      rollRatio: this.#archiveRollRatio,
       threshold: this.#archiveBytes,
       archive: this.#archiveStatsSync()
     }

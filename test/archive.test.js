@@ -40,6 +40,7 @@ test('AR-01 audit rows roll into an archive and memories survive', async () => {
     const result = await store.maybeArchive({ force: true })
     assert.equal(result.ok, true)
     assert.ok(result.archived >= 1)
+    assert.ok(result.bytes >= result.auditBytesBefore * 0.35, 'default roll archives about 40%')
     assert.ok(store.auditRows().length < 31)
     assert.equal(store.memoryById(memory.id).text, memory.text)
 

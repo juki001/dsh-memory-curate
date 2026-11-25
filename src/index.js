@@ -84,7 +84,9 @@ export const Config = Schema.object({
   storePath: Schema.string().default('')
     .description('自定义 NDJSON 路径；留空使用 DSH_HOME/data/memory-curate/').volatile(),
   auditArchiveBytes: Schema.number().step(1048576).min(1048576).max(1073741824).default(50 * 1024 * 1024)
-    .description('审计日志滚动归档阈值（字节）；超过后把最旧审计迁到 <store>.archive/，默认 50 MB').volatile()
+    .description('审计日志滚动归档阈值（字节）；超过后把最旧审计迁到 <store>.archive/，默认 50 MB').volatile(),
+  auditArchiveRollRatio: Schema.number().step(0.05).min(0.1).max(0.9).default(0.4)
+    .description('每次滚动归档当前审计字节的比例；默认 40%，主库保留约 60% 热读').volatile()
 })
 
 function resolveStorePath (configured) {
@@ -1635,7 +1637,8 @@ export async function apply (ctx, config = {}) {
     store = await MemoryStore.open(storeFile, {
       logger: ctx.logger,
       readOnly: lock !== null && !lock.ok,
-      archiveBytes: resolved.auditArchiveBytes
+      archiveBytes: resolved.auditArchiveBytes,
+      archiveRollRatio: resolved.auditArchiveRollRatio
     })
   } catch (error) {
     storeError = error
