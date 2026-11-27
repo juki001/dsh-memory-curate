@@ -88,7 +88,7 @@ export const Config = Schema.object({
     .description('检索时间衰减半衰期（天）；0 关闭衰减').volatile(),
   headroomTokens: Schema.number().step(1024).min(0).max(1048576).default(0)
     .description('绝对余量覆盖：>0 时优先于比例；0 表示按 headroomRatio 随模型大小自动计算').volatile(),
-  headroomRatio: Schema.number().step(0.001).min(0).max(1).default(0.0625)
+  headroomRatio: Schema.number().step(0.0001).min(0).max(1).default(0.0625)
     .description('预算余量占上下文窗口的比例；headroomTokens=0 时生效，用于按模型大小自适应').volatile(),
   storePath: Schema.string().default('')
     .description('自定义 NDJSON 路径；留空使用 DSH_HOME/data/memory-curate/').volatile(),

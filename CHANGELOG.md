@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.4
+
+- **Fix: `headroomRatio` schema step.** The field declared `step(0.001)` while its default is `0.0625` (62.5 steps), so the loader rejected the config with `expected number multiple of 0.001 but got 0.0625` and the plugin did not activate. The step is now `0.0001` (0.0625 = 625 steps) and the settings input uses the same step.
+- **Loader-schema test.** `test/config-schema.test.js` (CFG-01/02/03) validates the profile config and defaults through the schemastery `Config` schema — the path the loader actually enforces — and rejects a non-step value. Existing unit tests only called `resolveConfig`, which is why the step violation slipped through.
+
 ## 0.3.3
 
 - **Model-adaptive headroom.** `headroomTokens` was an absolute reserve (default 65536) subtracted from the usable message budget. On a 100k-context model that left only ~18k of budget (`100000 − 16000 − 65536`), so the pressure ratio sat above the hard threshold almost permanently and compaction fired on every step. A new `headroomRatio` (default `0.0625`) computes the reserve as `contextWindow × ratio` with a **floor of 8192**, so a 1M model keeps the old 65,536 (zero behavior change) while a 100k model reserves 8,192 instead of 6,250. `headroomTokens` is now an absolute override: >0 pins it, 0 (default) uses the ratio.

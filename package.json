@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-curate",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "跨对话记住偏好与项目约定；最近 5 个真人回合不被压缩；每条记忆可追溯、可修改；零配置、本地优先，支持共享与私有范围。Auditable long-term memory with five-turn compaction protection.",
   "type": "module",
   "main": "src/index.js",

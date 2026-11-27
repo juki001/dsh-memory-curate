@@ -319,7 +319,7 @@ window.__ModuleLoader__.load({
       { key: 'embeddingModel', label: '嵌入模型', type: 'text', placeholder: 'bge-m3' },
       { key: 'embeddingApiKeyEnv', label: 'API Key 环境变量', type: 'text', placeholder: '本地可留空' },
       { key: 'embeddingWeight', label: '向量权重 (0.05-0.95)', type: 'number', step: '0.05' },
-      { key: 'headroomRatio', label: '余量比例 (下限 8192)', type: 'number', step: '0.001' },
+      { key: 'headroomRatio', label: '余量比例 (下限 8192)', type: 'number', step: '0.0001' },
       { key: 'softRatio', label: '软阈值', type: 'number', step: '0.01' },
       { key: 'hardRatio', label: '硬阈值', type: 'number', step: '0.01' }
     ]
