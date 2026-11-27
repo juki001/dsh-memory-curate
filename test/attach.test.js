@@ -186,8 +186,7 @@ test('CM-RANGE-02 a range missing from the current surface is refused', async ()
  * `protected-window-exceeds-budget` on every step and only re-injected a
  * reminder. Compaction is now host-owned, so the same surface must compact.
  */
-test('REG-01 a surface fully inside the old five-turn window still compacts', async () => {
-  const calls = []
+test('REG-01 a surface fully inside the old five-turn window still compacts', async () => {  const calls = []
   const engine = {
     async compactIfNeeded (agent) {
       const nodes = [...agent.session.surface.nodes]
@@ -214,4 +213,31 @@ test('REG-01 a surface fully inside the old five-turn window still compacts', as
   const result = await engine.compactIfNeeded(agent, 'pressure', undefined)
   assert.equal(calls.length, 1, 'the host range must reach compactRegion instead of being refused')
   assert.equal(result.shadowedTokenCount, 7)
+})
+
+/**
+ * Second half of the old deadlock: the host refuses a summary that is not
+ * smaller than the span it shadows. The wrapper must surface that error once
+ * and inject nothing, so the next step is not spammed by the plugin.
+ */
+test('REG-02 a host "summary not smaller" refusal propagates without injecting a reminder', async () => {
+  const engine = {
+    async compactIfNeeded (agent) {
+      const nodes = [...agent.session.surface.nodes]
+      return this.compactRegion(nodes[0], nodes[nodes.length - 1], agent)
+    },
+    async compactRegion () {
+      throw new Error('summary is not smaller than the shadowed content (982 >= 980)')
+    }
+  }
+  const service = makeService({ engine, pruner: null })
+  const injected = []
+  const session = sixTurns()
+  const agent = { session, inject: (message) => { injected.push(message) } }
+  await service.attach(agent)
+  await assert.rejects(
+    () => engine.compactIfNeeded(agent, 'pressure', undefined),
+    /summary is not smaller/
+  )
+  assert.equal(injected.length, 0, 'the plugin must never inject a compaction reminder')
 })
