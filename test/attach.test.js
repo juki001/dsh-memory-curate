@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { CurateService, resolveConfig } from '../src/index.js'
 import { FakeSession, addSystem, addHuman, addAssistant, fakeTokenMeter } from './helpers.js'
 
-function makeService ({ engine, pruner }) {
+function makeService ({ engine, pruner, config = {} }) {
   const service = Object.create(CurateService.prototype)
-  service.config = resolveConfig({ softRatio: 0.8, hardRatio: 0.92, maxDeferSteps: 3 })
+  service.config = resolveConfig({ softRatio: 0.8, hardRatio: 0.92, maxDeferSteps: 3, protectTurns: 1, ...config })
   service.store = { activeMemories: () => [], auditRows: () => [] }
   service.storeError = null
   service.deferCount = new Map()
@@ -47,6 +47,15 @@ function makeEngine () {
   }
 }
 
+function sixTurns () {
+  const session = new FakeSession()
+  for (let index = 0; index < 6; index++) {
+    addHuman(session, `human ${index}`)
+    addAssistant(session, `assistant ${index}`)
+  }
+  return session
+}
+
 test('attach wraps the preset-scoped engine and pruner exactly once', async () => {
   const engine = makeEngine()
   const pruner = { calls: 0, pruneSession () { this.calls++ } }
@@ -70,88 +79,45 @@ test('attach degrades without throwing when the preset has no engine', async () 
   assert.equal(service.attachedAgents.has, service.attachedAgents.has)
 })
 
-test('pressure below the soft threshold is left to the engine', async () => {
+test('the plugin delegates every pressure decision to the host engine', async () => {
   const engine = makeEngine()
   const service = makeService({ engine, pruner: null })
-  service.pressureRatio = async () => 0.5
   const agent = { session: new FakeSession() }
   await service.attach(agent)
-  const original = engine.calls.length
   const result = await engine.compactIfNeeded(agent, 'pressure', undefined)
-  assert.equal(original, 0)
-  assert.equal(result, null)
+  assert.equal(engine.calls.length, 1, 'the host compactIfNeeded must run once')
+  assert.equal(result.kind, 'compacted')
 })
 
-test('a failed write gate defers instead of compacting', async () => {
+test('a failed write gate can no longer block compaction', async () => {
   const engine = makeEngine()
   const service = makeService({ engine, pruner: null })
-  service.pressureRatio = async () => 0.85
   service.gateWrite = () => ({ ok: false, cited: [] })
-  let deferred = null
-  const realDefer = service.defer.bind(service)
-  service.defer = async (...args) => {
-    deferred = { gate: args[1], gates: args[4] }
-    return realDefer(...args)
-  }
-  const session = new FakeSession()
-  for (let i = 0; i < 6; i++) {
-    addHuman(session, `human ${i}`)
-    addAssistant(session, `assistant ${i}`)
-  }
-  const agent = { session }
-  await service.attach(agent)
-  const result = await engine.compactIfNeeded(agent, 'pressure', undefined)
-  assert.equal(result, null)
-  assert.equal(engine.calls.length, 0)
-  assert.equal(deferred.gate, 'write')
-  assert.equal(service.deferCount.get(session), 1)
-})
-
-test('the region handed to the engine never includes the protected window', async () => {
-  const engine = makeEngine()
-  const service = makeService({ engine, pruner: null })
-  service.pressureRatio = async () => 0.95
-  service.gateWrite = () => ({ ok: true, cited: ['m1'] })
-  service.gateRecall = () => ({ ok: true, hits: ['m1'] })
-  const session = new FakeSession()
-  for (let i = 0; i < 6; i++) {
-    addHuman(session, `human ${i}`)
-    addAssistant(session, `assistant ${i}`)
-  }
+  const session = sixTurns()
   const agent = { session }
   await service.attach(agent)
   const nodes = [...session.surface.nodes]
-  const fifthFromLastHuman = nodes[2] // humans live on even seqs: 0,2,4,6,8,10
+  const result = await engine.compactRegion(nodes[0], nodes[nodes.length - 1], agent, undefined)
+  assert.equal(engine.calls.length, 1)
+  assert.equal(result.shadowedTokenCount, 42)
+  assert.equal(service.deferCount.get(session), undefined, 'no defer bookkeeping is kept')
+})
+
+test('the wrapper forwards the host region unchanged', async () => {
+  const engine = makeEngine()
+  const service = makeService({ engine, pruner: null })
+  const session = sixTurns()
+  const agent = { session }
+  await service.attach(agent)
+  const nodes = [...session.surface.nodes]
   await engine.compactRegion(nodes[0], nodes[nodes.length - 1], agent, undefined)
-  assert.equal(engine.calls.length, 1)
   assert.equal(engine.calls[0].start, nodes[0])
-  assert.ok(nodes.indexOf(engine.calls[0].end) < nodes.indexOf(fifthFromLastHuman))
+  assert.equal(engine.calls[0].end, nodes[nodes.length - 1])
 })
 
-test('approved compaction skips the gates it already passed', async () => {
+test('CM-HEAD-01 a host range that starts after the system head is forwarded', async () => {
   const engine = makeEngine()
   const service = makeService({ engine, pruner: null })
-  service.gateWrite = () => { throw new Error('gate must not run twice') }
-  service.gateRecall = () => { throw new Error('gate must not run twice') }
-  const session = new FakeSession()
-  for (let i = 0; i < 6; i++) {
-    addHuman(session, `human ${i}`)
-    addAssistant(session, `assistant ${i}`)
-  }
-  const agent = { session }
-  await service.attach(agent)
-  service.approvedCompaction.add(session)
-  const nodes = [...session.surface.nodes]
-  await engine.compactRegion(nodes[0], nodes[2], agent, undefined)
-  assert.equal(engine.calls.length, 1)
-})
-
-test('CM-HEAD-01 the pressure path starts after the protected system head', async () => {
-  const engine = makeEngine()
-  const service = makeService({ engine, pruner: null })
-  service.pressureRatio = async () => 0.95
-  service.gateWrite = () => ({ ok: true, cited: ['m1'] })
-  service.gateRecall = () => ({ ok: true, hits: ['m1'] })
   const session = new FakeSession()
   addSystem(session, '你是 DSH 助手')
   for (let i = 0; i < 6; i++) {
@@ -161,8 +127,7 @@ test('CM-HEAD-01 the pressure path starts after the protected system head', asyn
   const agent = { session }
   await service.attach(agent)
   const nodes = [...session.surface.nodes]
-  await engine.compactIfNeeded(agent, 'pressure', undefined)
-  assert.equal(engine.calls.length, 1)
+  await engine.compactRegion(nodes[1], nodes[nodes.length - 1], agent, undefined)
   assert.equal(engine.calls[0].start, nodes[1])
   assert.notEqual(engine.calls[0].start, nodes[0])
 })
@@ -170,7 +135,6 @@ test('CM-HEAD-01 the pressure path starts after the protected system head', asyn
 test('CM-HEAD-02 a span that starts on the system head is refused before any summary', async () => {
   const engine = makeEngine()
   const service = makeService({ engine, pruner: null })
-  service.pressureRatio = async () => 0.5
   const session = new FakeSession()
   addSystem(session, 'system prompt')
   for (let i = 0; i < 3; i++) {
@@ -188,14 +152,9 @@ test('CM-HEAD-02 a span that starts on the system head is refused before any sum
 test('CM-RANGE-01 a reversed stale range is refused before the engine sees it', async () => {
   const engine = makeEngine()
   const service = makeService({ engine, pruner: null })
-  service.pressureRatio = async () => 0.95
   const audits = []
   service.auditSafe = async (_op, fields) => { audits.push(fields) }
-  const session = new FakeSession()
-  for (let i = 0; i < 6; i++) {
-    addHuman(session, `human ${i}`)
-    addAssistant(session, `assistant ${i}`)
-  }
+  const session = sixTurns()
   const agent = { session }
   await service.attach(agent)
   const nodes = [...session.surface.nodes]
@@ -209,14 +168,9 @@ test('CM-RANGE-01 a reversed stale range is refused before the engine sees it', 
 test('CM-RANGE-02 a range missing from the current surface is refused', async () => {
   const engine = makeEngine()
   const service = makeService({ engine, pruner: null })
-  service.pressureRatio = async () => 0.95
   const audits = []
   service.auditSafe = async (_op, fields) => { audits.push(fields) }
-  const session = new FakeSession()
-  for (let i = 0; i < 6; i++) {
-    addHuman(session, `human ${i}`)
-    addAssistant(session, `assistant ${i}`)
-  }
+  const session = sixTurns()
   const agent = { session }
   await service.attach(agent)
   const nodes = [...session.surface.nodes]
@@ -224,4 +178,40 @@ test('CM-RANGE-02 a range missing from the current surface is refused', async ()
   assert.equal(result, null)
   assert.equal(engine.calls.length, 0)
   assert.equal(audits.at(-1)?.reason, 'region-not-on-surface')
+})
+
+/**
+ * Regression for the live deadlock: with the old five-human-turn window, a
+ * session whose entire surface sits inside that window refused compaction with
+ * `protected-window-exceeds-budget` on every step and only re-injected a
+ * reminder. Compaction is now host-owned, so the same surface must compact.
+ */
+test('REG-01 a surface fully inside the old five-turn window still compacts', async () => {
+  const calls = []
+  const engine = {
+    async compactIfNeeded (agent) {
+      const nodes = [...agent.session.surface.nodes]
+      return this.compactRegion(nodes[0], nodes[nodes.length - 1], agent)
+    },
+    async compactRegion (start, end) {
+      calls.push({ start, end })
+      return { shadowedSeqs: [start, end], shadowedTokenCount: 7 }
+    }
+  }
+  const service = makeService({ engine, pruner: null, config: { protectTurns: 5 } })
+  service.ctx.tokenMeter = {
+    measure: () => ({ totalTokens: 200000, nodes: [], surfaceTokens: 200000 }),
+    estimateMessage: () => 0,
+    contextPressure: () => ({ pressureTokens: 0, contextWindow: 80000 })
+  }
+  const session = new FakeSession()
+  for (let i = 0; i < 3; i++) {
+    addHuman(session, `human ${i}`)
+    addAssistant(session, `assistant ${i}`)
+  }
+  const agent = { session }
+  await service.attach(agent)
+  const result = await engine.compactIfNeeded(agent, 'pressure', undefined)
+  assert.equal(calls.length, 1, 'the host range must reach compactRegion instead of being refused')
+  assert.equal(result.shadowedTokenCount, 7)
 })

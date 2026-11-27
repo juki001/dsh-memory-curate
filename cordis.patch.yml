@@ -3,13 +3,17 @@
 # The plugin does not own the compaction engine and does not disable it. Each
 # agent preset mounts its own isolated compaction-basic engine; the plugin
 # wraps that preset-scoped instance on `agent/created` (via
-# `agentPresets.serviceFor(agent, 'compaction')`), so the memory gates and the
-# protected 5-turn window apply to the real engine in use.
+# `agentPresets.serviceFor(agent, 'compaction')`) only to add corruption guards
+# (protected system head, reversed or detached ranges). Compaction itself stays
+# host-owned: pressure, threshold and the retained-tail policy are the host's,
+# and memory capture never blocks a compaction.
 #
-# softRatio/hardRatio are fractions of the USABLE MESSAGE BUDGET
-# (contextWindow - request maxTokens - headroom), not of the raw context
-# window: a ratio above (contextWindow - maxTokens) / contextWindow can never be
-# reached, because the provider rejects the request first.
+# protectTurns bounds tool-result folding and the seqs recorded as a memory's
+# provenance; it no longer gates compaction.
+#
+# headroomTokens/headroomRatio tune the plugin's own memory-pressure reading;
+# softRatio/hardRatio/maxDeferSteps are retained for config compatibility and are
+# inert on the compaction path.
 - insert:
     - id: memory-curate
       name: dsh-memory-curate

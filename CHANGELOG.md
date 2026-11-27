@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0
+
+- **Compaction is host-owned again (breaking).** The plugin no longer vetoes, defers or injects a reminder for compaction. `filteredCompactIfNeeded` now delegates every pressure and overflow decision to the host engine, which already applies its own `thresholdRatio` and retained-tail (`retainTokens`) policy. `filteredCompactRegion` keeps only the corruption guards: protected system head, reversed range, region not on the surface. This is the shape proven by MemGPT/Letta (queue-manager eviction on overflow), OpenHands (condenser above the size limit) and OpenClaw (pre-compaction flush, one per cycle, silent): the runtime owns summarization, memory is a sidecar.
+
+- **Why it had to change.** The five-human-turn window plus `protectToolResults` could cover the whole surface on a small-context model (for example 80 000 tokens), so every pressure step refused with `protected-window-exceeds-budget`; the surviving sliver then failed the host's `summary is not smaller than the shadowed content` check. The hard-threshold reminder at the old `filteredCompactIfNeeded` was not deduplicated, so the loop repeated forever and grew the context it was meant to shrink. A 117-test suite now covers the delegation path, and `REG-01` reproduces the deadlock (a surface fully inside the old five-turn window must still compact).
+
+- **`protectTurns` still exists, for two narrower jobs.** It bounds tool-result folding (`pruneProtected`) and identifies the recent seqs recorded as a memory's provenance (`sourceSeqsOf`); it no longer gates compaction. `softRatio`, `hardRatio` and `maxDeferSteps` are kept for config compatibility and remain inert on the compaction path.
+
+- **Docs corrected.** README, README.en, the user guide and CONTRIBUTING no longer claim the last five human turns are exempt from compaction.
+
+- Tests: 117.
+
 ## 0.3.4
 
 - **Fix: `headroomRatio` schema step.** The field declared `step(0.001)` while its default is `0.0625` (62.5 steps), so the loader rejected the config with `expected number multiple of 0.001 but got 0.0625` and the plugin did not activate. The step is now `0.0001` (0.0625 = 625 steps) and the settings input uses the same step.

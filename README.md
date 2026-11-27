@@ -1,20 +1,20 @@
 # dsh-memory-curate
 
-> 跨对话记住偏好与项目约定；最近 5 个真人回合不被压缩；每条记忆可追溯、可修改；零配置、本地优先，支持共享与私有范围。
+> 跨对话记住偏好与项目约定；压缩归宿主、记忆走旁路绝不阻塞；每条记忆可追溯、可修改；零配置、本地优先，支持共享与私有范围。
 
 > 普通用户请先阅读 [使用说明书（中英双语）](使用说明书.md)；本 README 面向开发、部署与排障。
 
-给 DeepSeek Harness 的可审计长期记忆：运行时自己生成“该记什么、怎么记”的抽取提示，把记忆、审计与提示版本写进同一个 NDJSON 文件，用标签 + 触发词 + BM25（可选向量融合）召回，并把压缩决策与最近 5 个人类回合保护绑定在一起。
+给 DeepSeek Harness 的可审计长期记忆：运行时自己生成“该记什么、怎么记”的抽取提示，把记忆、审计与提示版本写进同一个 NDJSON 文件，用标签 + 触发词 + BM25（可选向量融合）召回。压缩由宿主引擎按 token 压力自动完成，插件不否决、不推迟、不注入提醒，只在包裹层保留防损坏护栏。
 
 ## 为什么需要它
 
-Harness 的压缩引擎按 token 压力工作，默认不区分“哪段对话值得留、哪段还没被记忆覆盖”。本插件不重写角色分工，只做压缩前的策略层：
+Harness 的压缩引擎本身已经按 token 压力与保留尾部工作，不需要插件替它决定“能不能压”。本插件的定位是压缩旁边的记忆层，而不是压缩之前的闸门：
 
-- **先记忆，后压缩**：一段对话要进入压缩，必须先有落库记忆、且该记忆能被区间内的实体召回；否则推迟，而不是为了压而压。
-- **按可用预算判断压力**：分母不是裸上下文窗口，而是 `上下文窗口 − 单请求预留输出 − 安全余量`；否则阈值会高过服务端硬上限，压缩永远等不到触发。
+- **压缩归宿主，记忆走旁路**：压力与溢出都交给宿主 `compaction-basic`（阈值 + 按 token 预算保留最近尾部）；插件的包裹只拦截会写坏会话的区间（系统头、倒序、已离开 surface 的区间）。
+- **记忆写入永不阻塞压缩**：写入是 best-effort 旁路，失败也不影响这一轮把上下文压下去——这是 MemGPT/Letta、OpenHands、OpenClaw 共同的取舍：摘要归运行时，记忆是旁路。
 - **不删原文**：压缩只改模型可见投影，保留可恢复回执；折叠的工具结果可用 `memory_curate_trace` 找回 `fullTextRef`。
-- **最近 5 个人类回合不动**：窗口按真实 `source.kind === 'user'` 消息计算，长回合整体保护。
-- **系统提示头不动**：v4 会话的 `system/message` 固定占 surface 节点 0（受保护的系统头），本插件计算的压缩区间从节点 1 起；包装层在区间起点落在节点 0 时直接拒绝，避免宿主先落盘摘要、再拒绝对 surface 的替换，把摘要留成一份遮蔽系统头的坏记录。
+- **工具结果可折叠**：`pruneProtected` 按 `protectTurns` 保护最近回合内的工具输出，区外按 head + 标记 + tail 折叠。
+- **系统提示头不动**：v4 会话的 `system/message` 固定占 surface 节点 0（受保护的系统头），包装层在区间起点落在节点 0 时直接拒绝，避免宿主先落盘摘要、再拒绝对 surface 的替换，把摘要留成一份遮蔽系统头的坏记录。
 - **全部可审计**：写入、更新、删除、召回、折叠、压缩、过期、合并建议、提示版本变更都追加审计行，永不覆盖旧行。
 - **审计不会无限撑大主文件**：超过 `auditArchiveBytes`（默认 50 MB）时，按 `auditArchiveRollRatio`（默认 40%）把最旧审计滚到 `<store>.archive/`，主库保留约 60%；`trace` 仍会跨归档读取，并可用 `retain_audit` 永久保留关键决策行。
 
@@ -42,10 +42,10 @@ dsh plugin --profile web add dsh-memory-curate
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `protectTurns` | 5 | 最近多少个真人回合不参与压缩 |
+| `protectTurns` | 5 | 工具结果折叠与记忆溯源使用的最近真人回合数；不再否决压缩 |
 | `protectToolResults` | true | 保护区内工具结果不折叠 |
-| `softRatio` | 0.80 | 软阈值：占用达到**可用消息预算**的该比例后评估记忆闸门 |
-| `hardRatio` | 0.92 | 硬阈值：达到后即使记忆不足也强制压缩 |
+| `softRatio` | 0.80 | 兼容项：记忆压力读数阈值；压缩路径已交还宿主，不参与否决 |
+| `hardRatio` | 0.92 | 兼容项：同上，已不由插件用于强制压缩 |
 | `headroomTokens` | 0 | 绝对余量覆盖：>0 时优先于比例；0 表示按 `headroomRatio` 自动计算 |
 | `headroomRatio` | 0.0625 | 预算余量占上下文窗口的比例；按模型大小自适应，`headroomTokens=0` 时生效 |
 | `maxDeferSteps` | 3 | 连续推迟上限，超过转强制 |
@@ -149,9 +149,9 @@ dsh plugin --profile web add dsh-memory-curate
 
 Web profile 把压缩引擎下沉到每个 agent preset 的隔离域，顶层没有 `compaction` 服务。插件因此不 `inject: ['compaction']`，而是在 `agent/created` 时用 `agentPresets.serviceFor(agent, 'compaction')` 取得该预设实际使用的引擎实例，一次性包裹：
 
-1. **压力路径**：包裹 `compactIfNeeded`，按可用预算算压力，再算保护窗口与三道闸；低于软阈值不干预，未过闸则安静推迟并计数，通过才调用引擎压缩自己选出的安全区间。
-2. **溢出恢复**：`trigger === 'context-overflow'` 时跳过写/召回闸（服务端已经拒绝，恢复不应再被记忆闸挡住），保护窗口仍然生效。
-3. **直接区间**：包裹 `compactRegion`，把越过保护窗口的区间裁到窗口起点之前；整个区间都在保护区内时拒绝并审计。
+1. **压力路径**：`compactIfNeeded` 直接委派宿主——阈值、保留尾部与压缩区间全部由宿主 `compaction-basic` 决定，插件不再计算保护窗口、不再推迟计数。
+2. **溢出恢复**：`context-overflow` 同样直接委派宿主，服务端拒绝后由宿主用 `retainTokens: 0` 恢复。
+3. **直接区间**：包裹 `compactRegion`，只保留防损坏护栏——区间起于受保护系统头（节点 0）、区间倒序、或区间已不在 surface 上都立即拒绝并审计；其余区间原样转交宿主。
 4. **工具结果折叠**：包裹同域的 `toolResultPruner.pruneSession`，保护区内不折叠，区外按 head 4096 + 标记 + tail 1024 折叠，并复刻 `compaction/prune` 影子价事件。
 
 若某个 preset 没有压缩引擎，插件降级为“只提供记忆工具/召回/锚点”，并写一条 `degraded` 审计，不阻塞加载。
@@ -159,19 +159,19 @@ Web profile 把压缩引擎下沉到每个 agent preset 的隔离域，顶层没
 ## 开发
 
 ```bash
-npm test        # 102 条单测，无需模型凭据
+npm test        # 117 条单测，无需模型凭据
 npm run selfcheck
 npm run observe # 只读查看运行中的存储：记忆数、compact 决策、折叠与保护区跳过
 node bench/eval.mjs --md /tmp/eval.md   # 召回评测（内置 smoke 样本）
 ```
 
-单测通过一个解析钩子把 `@deepseek-ai/*` 指向本机 Harness 安装，因此插件目录不需要安装 peer 依赖。压缩接管、压力预算、溢出旁路、保护区裁剪、折叠算法、NDJSON 存储、BM25/融合检索、时效衰减、合并建议与提示校验都有独立断言。
+单测通过一个解析钩子把 `@deepseek-ai/*` 指向本机 Harness 安装，因此插件目录不需要安装 peer 依赖。压缩委派与三条防损坏护栏、压力预算、折叠算法、NDJSON 存储、BM25/融合检索、时效衰减、合并建议与提示校验都有独立断言；`REG-01` 复现并锁定了旧版的“保护区吃满预算导致永不压缩”死锁。
 
 ## 与 billion-context 共存
 
 Web profile 里若同时安装了 billion-context，它的 `bili-compaction-gate` 会在自己启用压缩时把各 agent preset 内的 `compaction-basic` 全部禁用；本插件此时取不到压缩引擎，只能提供记忆工具、检索、审计和锚点（会写一条 `compact decision=degraded` 审计）。
 
-如果希望本插件接管压缩与 5 轮保护，在 profile 的 `cordis.patch.yml` 追加：
+如果希望本插件（以及宿主压缩）正常工作，需要让 `compaction-basic` 不被 bili 禁用，在 profile 的 `cordis.patch.yml` 追加：
 
 ```yaml
 - id: bili-native

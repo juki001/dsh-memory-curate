@@ -18,9 +18,9 @@ Thanks for improving `dsh-memory-curate`.
 
 ## Design constraints
 
-- The plugin must not implement its own compaction algorithm; summaries and surface replacement stay with the host engine.
-- The protected system head and the last five human turns are invariants.
-- Memory writes must remain append-only and auditable.
+- The plugin must not implement its own compaction algorithm; summaries, surface replacement, pressure threshold and the retained tail stay with the host engine. Compaction must never be gated on memory writes, recall, defers or a reminder.
+- The protected system head is an invariant; a span that starts on node 0 is refused before any summary is committed.
+- Memory writes must remain append-only, auditable and non-blocking.
 - Default behavior must work without embeddings or a cloud account.
 
 ## Reporting bugs

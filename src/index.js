@@ -1159,87 +1159,22 @@ export class CurateService extends Service {
     return null
   }
 
+  /**
+   * Compaction is host-owned. The plugin never vetoes, defers, or injects a
+   * reminder: the host engine applies its own pressure threshold and
+   * retained-tail policy, and `filteredCompactRegion` keeps only the corruption
+   * guards (protected system head, stale or reversed ranges). Memory capture
+   * stays best-effort and non-blocking, so a failed write can never keep the
+   * context from being shed. This is the MemGPT / OpenHands / OpenClaw shape:
+   * the runtime owns summarization, memory is a sidecar.
+   */
   async filteredCompactIfNeeded (engine, original, agent, trigger, signal) {
-    const session = agent?.session
-    if (session === undefined || session === null) {
-      return original.call(engine, agent, trigger, signal)
-    }
-    if (trigger === 'context-overflow') {
-      // The provider already rejected the request. The memory gates are a way
-      // to avoid *unnecessary* compaction, not a reason to fail a recovery:
-      // force this one compaction (the five-turn protection still applies) and
-      // let the host engine decide how much to shed.
-      this.approvedCompaction.add(session)
-      this.approvedGates.set(session, { write: true, recall: true })
-      try {
-        return await original.call(engine, agent, trigger, signal)
-      } finally {
-        this.approvedCompaction.delete(session)
-        this.approvedGates.delete(session)
-      }
-    }
-    if (trigger !== 'pressure') return original.call(engine, agent, trigger, signal)
-    const ratio = await this.pressureRatio(session)
-    if (ratio === null) {
-      // Without a usable budget the plugin cannot judge pressure; the host
-      // engine's own threshold is the safer authority.
-      return original.call(engine, agent, trigger, signal)
-    }
-    if (ratio < this.config.softRatio) return null
-    const hard = ratio >= this.config.hardRatio
-    const forcedByDefer = (this.deferCount.get(session) ?? 0) >= this.config.maxDeferSteps
-    const window = computeProtectedWindow(session, this.config.protectTurns)
-    const nodes = [...session.surface.nodes]
-    const firstIndex = protectedHeadSeq(session) === null ? 0 : 1
-    if (window.startIndex <= firstIndex) {
-      this.deferCount.set(session, (this.deferCount.get(session) ?? 0) + 1)
-      await this.auditSafe('compact', {
-        decision: 'refused',
-        reason: 'protected-window-exceeds-budget',
-        recoverable: true,
-        ratio: Number(ratio.toFixed(4)),
-        sessionId: session.id,
-        promptVersion: this.promptVersion()
-      })
-      return null
-    }
-    const seqs = nodes.slice(firstIndex, window.startIndex)
-    const region = { start: seqs[0], end: seqs[seqs.length - 1], seqs }
-    const written = this.gateWrite(region, agent)
-    if (!written.ok && !hard && !forcedByDefer) {
-      await this.defer(session, 'write', ratio, region, { write: false, recall: false, forced: false })
-      return null
-    }
-    const recalled = written.ok ? this.gateRecall(session, region, written.cited, agent) : { ok: false, hits: [] }
-    if (!recalled.ok && !hard && !forcedByDefer) {
-      await this.defer(session, 'recall', ratio, region, { write: true, recall: false, forced: false })
-      return null
-    }
-    if (!written.ok) {
-      this.injectReminder(agent, '上下文已到硬阈值，但这段对话还没有可用的长期记忆。请先用 memory_curate_save 保存关键约定，下一步将强制执行压缩。')
-    }
-    this.approvedCompaction.add(session)
-    this.approvedGates.set(session, { write: written.ok, recall: recalled.ok })
-    try {
-      return await engine.compactRegion(region.start, region.end, agent, signal)
-    } catch {
-      return null
-    } finally {
-      this.approvedCompaction.delete(session)
-      this.approvedGates.delete(session)
-    }
+    return original.call(engine, agent, trigger, signal)
   }
 
   async filteredCompactRegion (engine, original, start, end, agent, signal) {
     const session = agent?.session
     if (session === undefined || session === null) return original.call(engine, start, end, agent, signal)
-    const ratio = await this.pressureRatio(session)
-    const hard = Number.isFinite(ratio) && ratio >= this.config.hardRatio
-    const forcedByDefer = (this.deferCount.get(session) ?? 0) >= this.config.maxDeferSteps
-    const approved = this.approvedCompaction.has(session)
-    const approvedGates = this.approvedGates.get(session)
-    const forced = hard || forcedByDefer || approved
-    const window = computeProtectedWindow(session, this.config.protectTurns)
     const nodes = [...session.surface.nodes]
     const startIndex = nodes.indexOf(start)
     const endIndex = nodes.indexOf(end)
@@ -1283,74 +1218,30 @@ export class CurateService extends Service {
       })
       return null
     }
-    let adjustedEnd = end
-    let protectedTrimmed = 0
-    if (window.startIndex >= 0 && endIndex >= window.startIndex) {
-      if (startIndex >= window.startIndex) {
-        this.deferCount.set(session, (this.deferCount.get(session) ?? 0) + 1)
-        await this.auditSafe('compact', {
-          decision: 'refused',
-          reason: 'protected-window-exceeds-budget',
-          recoverable: true,
-          ratio: Number.isFinite(ratio) ? Number(ratio.toFixed(4)) : null,
-          sessionId: session.id,
-          promptVersion: this.promptVersion()
-        })
-        return null
-      }
-      const lastSafeIndex = window.startIndex - 1
-      adjustedEnd = nodes[lastSafeIndex]
-      protectedTrimmed = endIndex - lastSafeIndex
-    }
-    const adjustedEndIndex = nodes.indexOf(adjustedEnd)
-    const region = { start, end: adjustedEnd, seqs: nodes.slice(startIndex, adjustedEndIndex + 1) }
-    const written = approved
-      ? { ok: approvedGates?.write === true, cited: [] }
-      : this.gateWrite(region, agent)
-    if (!written.ok && !forced) {
-      await this.defer(session, 'write', ratio, region, { write: false, recall: false, forced: false })
-      return null
-    }
-    const recalled = approved
-      ? { ok: approvedGates?.recall === true, hits: [] }
-      : written.ok ? this.gateRecall(session, region, written.cited, agent) : { ok: false, hits: [] }
-    if (!recalled.ok && !forced) {
-      await this.defer(session, 'recall', ratio, region, { write: true, recall: false, forced: false })
-      return null
-    }
-    if (forced && !written.ok && !this.forceNext.has(session)) {
-      this.forceNext.add(session)
-      this.injectReminder(agent, '上下文已到硬阈值，但这段对话还没有可用的长期记忆。请先用 memory_curate_save 保存关键约定，下一步将强制压缩。')
-    }
+    const region = { start, end, seqs: nodes.slice(startIndex, endIndex + 1) }
     const generation = session.surface.replaceGeneration
     try {
-      const result = await original.call(engine, region.start, region.end, agent, signal)
+      const result = await original.call(engine, start, end, agent, signal)
       const replaced = session.surface.replaceGeneration > generation
       if (!replaced) {
         await this.auditSafe('compact', {
           decision: 'refused',
           reason: 'engine returned without replacing the surface',
           recoverable: false,
-          region: { start: region.start, end: region.end },
+          region: { start, end },
           sessionId: session.id,
           sourceSeqs: region.seqs,
           promptVersion: this.promptVersion()
         })
         return result
       }
-      this.deferCount.delete(session)
-      this.forceNext.delete(session)
       this.anchorDirty.add(session)
       const shadowedSeqs = Array.isArray(result?.shadowedSeqs) ? result.shadowedSeqs : region.seqs
       await this.auditSafe('compact', {
         decision: 'compressed',
-        trigger: hard ? 'hard-threshold' : forcedByDefer ? 'defer-limit' : 'pressure',
-        region: { start: region.start, end: region.end },
+        region: { start, end },
         shadowedSeqs,
         shadowedTokenCount: result?.shadowedTokenCount,
-        gate: { write: written.ok, recall: recalled.ok, replace: true },
-        protectedTrimmed,
-        ratio: Number.isFinite(ratio) ? Number(ratio.toFixed(4)) : null,
         recoverable: true,
         sessionId: session.id,
         sourceSeqs: shadowedSeqs,
@@ -1359,13 +1250,12 @@ export class CurateService extends Service {
       this.markAnchorDirty()
       return result
     } catch (error) {
-      this.deferCount.set(session, (this.deferCount.get(session) ?? 0) + 1)
       await this.auditSafe('compact', {
         decision: 'refused',
         gate: 'replace',
         recoverable: false,
         reason: error?.message ?? String(error),
-        region: { start: region.start, end: region.end },
+        region: { start, end },
         sessionId: session.id,
         sourceSeqs: region.seqs,
         promptVersion: this.promptVersion()
@@ -1512,14 +1402,6 @@ export class CurateService extends Service {
         sessionId: session.id,
         promptVersion: this.promptVersion()
       })
-    }
-  }
-
-  injectReminder (agent, text) {
-    try {
-      agent.inject(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'memory-curate' } }))
-    } catch {
-      // Reminders are best-effort; the audit row below records the attempt.
     }
   }
 

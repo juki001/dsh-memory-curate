@@ -1,4 +1,5 @@
-﻿# dsh-memory-curate 对外发布文案
+> **0.4.0 起已变更**：压缩由宿主 compaction-basic 全权负责（阈值 + 保留尾部），插件不再用真人回合保护窗或记忆闸门否决/推迟压缩，也不再注入压缩提醒。本文档中的硬阈值强制压缩、保护区否决、先记忆后压缩属于 0.3.x 的历史设计，仅作追溯参考。protectTurns 现在只用于工具结果折叠与记忆溯源。
+# dsh-memory-curate 对外发布文案
 
 - 版本：0.3.2
 - 仓库：https://github.com/juki001/dsh-memory-curate
