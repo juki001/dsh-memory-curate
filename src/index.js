@@ -1050,6 +1050,38 @@ export class CurateService extends Service {
     }
   }
 
+  /**
+   * Pressure-driven tool-result folding.
+   *
+   * The plugin owns tool-result pruning, but it only ran when the host engine
+   * called `toolResultPruner.pruneSession` under its own pre-step pressure
+   * check. Profiles that disable host compaction (for example a bundle that
+   * patches `compaction-basic: auto: false`) never call it, so nothing was ever
+   * folded and the context grew into the model window. This wires the same
+   * pruning to the plugin's own per-step hook, gated by the same fill ratio:
+   * below `softRatio` nothing changes; at or above it, older turns are folded
+   * while the latest human turn stays intact.
+   */
+  async maybePruneAtPressure (agent) {
+    if (!this.enabled) return
+    const session = agent?.session
+    if (session === undefined || session === null || typeof session.append !== 'function') return
+    const window = await this.resolveWindow(session)
+    const thresholds = this.resolveThresholds(window)
+    const ratio = await this.pressureRatio(session, window)
+    if (ratio === null || !(ratio >= thresholds.softRatio)) return
+    const result = foldToolResults({
+      session,
+      tokenMeter: this.ctx.tokenMeter,
+      protectedWindow: computeProtectedWindow(session, 1),
+      protectToolResults: true
+    })
+    if (result.pruned.length > 0) {
+      this.markAnchorDirty()
+      await this.auditPrune(session, result, 'pressure')
+    }
+  }
+
   async resolveWindow (session) {
     const pressure = this.ctx.tokenMeter.contextPressure(session)
     if (Number.isFinite(pressure?.contextWindow) && pressure.contextWindow > 0) return pressure.contextWindow
@@ -1062,6 +1094,22 @@ export class CurateService extends Service {
     } catch {
       return null
     }
+  }
+
+  /**
+   * Effective soft/hard pressure ratios for a model window.
+   *
+   * A window below 100K has less long-context headroom, so tool-result folding
+   * starts earlier (0.75/0.9) to keep context quality. At 100K and above the
+   * fixed defaults (0.80/0.92) apply, so large models keep packing more. The
+   * tier is automatic and ignores any pinned soft/hard config; `hardRatio` is
+   * compat-only on the host-owned compaction path.
+   */
+  resolveThresholds (window) {
+    if (Number.isFinite(window) && window > 0 && window < 100_000) {
+      return { softRatio: 0.75, hardRatio: 0.9 }
+    }
+    return { softRatio: 0.8, hardRatio: 0.92 }
   }
 
   gateWrite (region, agent = null) {
@@ -1349,6 +1397,7 @@ export class CurateService extends Service {
   async beforeStep (agent, signal) {
     if (!this.enabled) return
     await this.attach(agent)
+    await this.maybePruneAtPressure(agent)
     try {
       if (typeof this.store.maybeArchive === 'function') await this.store.maybeArchive()
     } catch (error) {

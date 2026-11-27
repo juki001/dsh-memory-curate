@@ -44,8 +44,8 @@ Every option is a `volatile()` field, so the DSH settings page renders a control
 |---|---|---|
 | `protectTurns` | 5 | Human turns protected from compaction and folding |
 | `protectToolResults` | true | Do not fold tool results inside the protected window |
-| `softRatio` | 0.80 | Fraction of the **usable message budget** at which memory gates start |
-| `hardRatio` | 0.92 | Fraction at which compaction is forced regardless of memory |
+| `softRatio` | 0.80 | Compatibility item, not exposed in settings; the folding gate follows the window (< 100K uses 0.75, ≥ 100K uses 0.80) |
+| `hardRatio` | 0.92 | Compatibility item (0.9 below a 100K window), not exposed in settings |
 | `headroomTokens` | 0 | Absolute headroom override; >0 wins over the ratio; 0 means derive from `headroomRatio` |
 | `headroomRatio` | 0.0625 | Headroom as a fraction of the context window; model-adaptive, active when `headroomTokens=0` |
 | `maxDeferSteps` | 3 | Consecutive defers before compaction is forced |
@@ -69,6 +69,8 @@ Every option is a `volatile()` field, so the DSH settings page renders a control
 `softRatio` must stay below `hardRatio` or the plugin refuses to load.
 
 **Threshold semantics**: the pressure ratio is `tokens / (contextWindow − header.maxTokens − headroom)`, where `headroom` defaults to `headroomRatio × contextWindow` and scales with the model (`headroomTokens=0`; a value >0 pins an absolute reserve). The ratio-derived headroom has a floor of **8192**. For deepseek-flash (1,048,576 context, 256,000 reserved completion) `headroomRatio=0.0625` gives 65,536 and the default soft threshold fires at about 58% of the window; on a 100k-context model the same ratio would give 6,250 but is floored to 8,192, so a fixed value no longer eats ~65% of the budget. Measured against the raw window, 0.8 (838,860) sits above the 792,576 message ceiling, so compaction would never run before the provider rejects the request.
+
+In addition, the tool-result folding gate is fully automatic: `softRatio=0.75 / hardRatio=0.9` below a 100K window and `0.80/0.92` at or above it. Settings no longer expose the soft/hard thresholds.
 
 ## Tools
 

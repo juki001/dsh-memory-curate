@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- **Tool-result folding runs even when the host never asks.** The plugin owns tool-result pruning, but it only ran inside the host engine's own pre-step pressure check. A profile that disables host compaction (for example a bundle patching `compaction-basic: auto: false`) never called it, so nothing folded and the context grew into the model window. The plugin's own pre-step hook now applies the same pruning above `softRatio`, keeps the latest human turn intact, and audits each prune as `reason=pressure`.
+- **100K split for the folding gate.** Windows below 100K fold tool results earlier (`softRatio=0.75 / hardRatio=0.9`); 100K and above use `0.80/0.92`. `resolveThresholds(window)` is the single place that decides the tier and ignores any pinned config. `hardRatio` stays compat-only on the host-owned compaction path.
+- **Thresholds are no longer user-editable.** The settings panel drops the `softRatio`/`hardRatio` input fields; the tier is automatic, so there is nothing meaningful to edit.
+- Tests: 121 (adds `CM-BUDGET-07/08/09`).
+
 ## 0.4.0
 
 - **Compaction is host-owned again (breaking).** The plugin no longer vetoes, defers or injects a reminder for compaction. `filteredCompactIfNeeded` now delegates every pressure and overflow decision to the host engine, which already applies its own `thresholdRatio` and retained-tail (`retainTokens`) policy. `filteredCompactRegion` keeps only the corruption guards: protected system head, reversed range, region not on the surface. This is the shape proven by MemGPT/Letta (queue-manager eviction on overflow), OpenHands (condenser above the size limit) and OpenClaw (pre-compaction flush, one per cycle, silent): the runtime owns summarization, memory is a sidecar.

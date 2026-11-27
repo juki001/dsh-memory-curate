@@ -1,7 +1,7 @@
 {
   "name": "dsh-memory-curate",
-  "version": "0.4.0",
-  "description": "跨对话记住偏好与项目约定；压缩归宿主、记忆走旁路不阻塞；每条记忆可追溯、可修改；零配置、本地优先，支持共享与私有范围。Auditable long-term memory that never blocks host-owned compaction.",
+  "version": "0.4.1",
+  "description": "璺ㄥ璇濊浣忓亸濂戒笌椤圭洰绾﹀畾锛涘帇缂╁綊瀹夸富銆佽蹇嗚蛋鏃佽矾涓嶉樆濉烇紱姣忔潯璁板繂鍙拷婧€佸彲淇敼锛涢浂閰嶇疆銆佹湰鍦颁紭鍏堬紝鏀寔鍏变韩涓庣鏈夎寖鍥淬€侫uditable long-term memory that never blocks host-owned compaction.",
   "type": "module",
   "main": "src/index.js",
   "exports": {
@@ -15,7 +15,7 @@
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
-    "使用说明书.md",
+    "浣跨敤璇存槑涔?md",
     "CONTACT.md",
     "UI-INTEGRATION.md",
     "CHANGELOG.md",
@@ -37,7 +37,7 @@
     "privacy"
   ],
   "author": {
-    "name": "久棋科技 · 火火团队 (Jiuqi Technology · Huohuo Team)",
+    "name": "涔呮绉戞妧 路 鐏伀鍥㈤槦 (Jiuqi Technology 路 Huohuo Team)",
     "email": "5535483@qq.com"
   },
   "license": "MIT",

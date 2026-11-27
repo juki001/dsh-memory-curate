@@ -67,6 +67,25 @@ test('CM-BUDGET-06 headroom scales with the model window', async () => {
   assert.equal(await service.pressureBudget(session, 100000), 100000 - 16000 - 8192)
 })
 
+test('CM-BUDGET-07 windows below 100K fold earlier (0.75/0.9)', () => {
+  const service = makeCurateService()
+  assert.deepEqual(service.resolveThresholds(64000), { softRatio: 0.75, hardRatio: 0.9 })
+  assert.deepEqual(service.resolveThresholds(99999), { softRatio: 0.75, hardRatio: 0.9 })
+})
+
+test('CM-BUDGET-08 windows at or above 100K keep 0.80/0.92', () => {
+  const service = makeCurateService()
+  assert.deepEqual(service.resolveThresholds(100000), { softRatio: 0.8, hardRatio: 0.92 })
+  assert.deepEqual(service.resolveThresholds(1048576), { softRatio: 0.8, hardRatio: 0.92 })
+  assert.deepEqual(service.resolveThresholds(null), { softRatio: 0.8, hardRatio: 0.92 })
+})
+
+test('CM-BUDGET-09 a pinned config no longer overrides the automatic tier', () => {
+  const pinned = makeCurateService({ config: { softRatio: 0.85, hardRatio: 0.95 } })
+  assert.deepEqual(pinned.resolveThresholds(200000), { softRatio: 0.8, hardRatio: 0.92 })
+  assert.deepEqual(pinned.resolveThresholds(50000), { softRatio: 0.75, hardRatio: 0.9 })
+})
+
 function gatedEngine () {
   return {
     calls: [],

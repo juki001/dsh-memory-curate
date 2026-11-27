@@ -26,7 +26,7 @@ Harness 的压缩引擎本身已经按 token 压力与保留尾部工作，不�
 dsh plugin --profile web add github:juki001/dsh-memory-curate
 ```
 
-也可以直接从 npm 安装（已发布 0.3.2）：
+也可以直接从 npm 安装（已发布 0.4.1）：
 
 ```bash
 dsh plugin --profile web add dsh-memory-curate
@@ -44,8 +44,8 @@ dsh plugin --profile web add dsh-memory-curate
 |---|---|---|
 | `protectTurns` | 5 | 工具结果折叠与记忆溯源使用的最近真人回合数；不再否决压缩 |
 | `protectToolResults` | true | 保护区内工具结果不折叠 |
-| `softRatio` | 0.80 | 兼容项：记忆压力读数阈值；压缩路径已交还宿主，不参与否决 |
-| `hardRatio` | 0.92 | 兼容项：同上，已不由插件用于强制压缩 |
+| `softRatio` | 0.80 | 兼容项：不在设置页暴露；实际门限由窗口决定（< 100K 用 0.75，≥ 100K 用 0.80） |
+| `hardRatio` | 0.92 | 兼容项：同上（0.9 / 0.92），不在设置页暴露 |
 | `headroomTokens` | 0 | 绝对余量覆盖：>0 时优先于比例；0 表示按 `headroomRatio` 自动计算 |
 | `headroomRatio` | 0.0625 | 预算余量占上下文窗口的比例；按模型大小自适应，`headroomTokens=0` 时生效 |
 | `maxDeferSteps` | 3 | 连续推迟上限，超过转强制 |
@@ -69,6 +69,8 @@ dsh plugin --profile web add dsh-memory-curate
 `softRatio` 必须小于 `hardRatio`，否则插件拒绝加载。
 
 **关于阈值的口径**：`softRatio`/`hardRatio` 的分母是 `contextWindow − header.maxTokens − headroom`，其中 `headroom` 默认按 `headroomRatio × contextWindow` 随模型自适应（下限 **8192**；`headroomTokens=0` 时生效，置为 >0 则用绝对值覆盖）。以 deepseek-flash 为例：上下文 1,048,576、单请求预留输出 256,000，`headroomRatio=0.0625` 得余量 65,536，可用预算 727,040，默认软阈值在约 58% 窗口处触发；同样配置在 10 万上下文模型上余量按比例只有 6,250、被下限抬到 8,192，预算约 75,808，不再被固定值吃光。若按裸窗口计算 0.8（838,860），会高于服务端允许的消息上限 792,576，压缩永远等不到触发。
+
+另外，工具结果折叠门限完全由窗口自动决定：窗口 < 100K 时为 `softRatio=0.75 / hardRatio=0.9`，100K 及以上为 `0.80/0.92`。设置页不再提供软/硬阈值的修改入口。
 
 ## 四个工具
 
