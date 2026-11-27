@@ -7,7 +7,8 @@ import {
   BROWSE_PATH,
   TRACE_PATH,
   UPDATE_PATH,
-  DELETE_PATH
+  DELETE_PATH,
+  CONFIG_PATH
 } from '../src/browser-routes.js'
 
 function fakeRes () {
@@ -57,6 +58,8 @@ function fakeService (overrides = {}) {
     trace: async () => [{ kind: 'memory', id: 'm_1', text: '默认使用 pnpm' }],
     updateMemory: async (input) => ({ ok: true, id: 'm_2', input }),
     deleteById: async (input) => ({ ok: true, tombstoneId: 't_1', input }),
+    configSnapshot: () => ({ retrievalMode: 'bm25', headroomRatio: 0.0625, headroomFloor: 8192 }),
+    saveConfig: async (input) => ({ retrievalMode: input?.retrievalMode ?? 'bm25', headroomRatio: input?.headroomRatio ?? 0.0625, headroomFloor: 8192 }),
     ...overrides
   }
 }
@@ -178,7 +181,7 @@ test('UI-08 a host without the service is reported as 503, not a boot failure', 
   assert.match(res.body.error, /does not provide service\.browse/)
 })
 
-test('UI-09 registration mounts five exact routes and never throws', () => {
+test('UI-09 registration mounts six exact routes and never throws', () => {
   const paths = []
   const ctx = {
     inject: (_names, callback) => callback({
@@ -199,7 +202,35 @@ test('UI-09 registration mounts five exact routes and never throws', () => {
     `exact ${BROWSE_PATH}`,
     `exact ${TRACE_PATH}`,
     `exact ${UPDATE_PATH}`,
-    `exact ${DELETE_PATH}`
+    `exact ${DELETE_PATH}`,
+    `exact ${CONFIG_PATH}`
   ])
   assert.equal(registerMemoryRoutes({}, fakeService()).ok, false)
+})
+
+test('UI-10 config requires the key and round-trips the snapshot', async () => {
+  const handlers = createMemoryHandlers(fakeService(), KEY)
+
+  const denied = fakeRes()
+  await handlers.config(fakeReq({ url: CONFIG_PATH }), denied)
+  assert.equal(denied.status, 401)
+
+  const read = fakeRes()
+  await handlers.config(fakeReq({
+    url: CONFIG_PATH,
+    headers: { 'x-memory-curate-key': KEY }
+  }), read)
+  assert.equal(read.status, 200)
+  assert.equal(read.body.config.retrievalMode, 'bm25')
+  assert.equal(read.body.config.headroomFloor, 8192)
+
+  const wrote = fakeRes()
+  await handlers.config(fakeReq({
+    method: 'POST',
+    url: CONFIG_PATH,
+    headers: { 'x-memory-curate-key': KEY, 'content-type': 'application/json' },
+    body: { retrievalMode: 'hybrid' }
+  }), wrote)
+  assert.equal(wrote.status, 200)
+  assert.equal(wrote.body.config.retrievalMode, 'hybrid')
 })

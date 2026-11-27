@@ -7,7 +7,7 @@
 # protected 5-turn window apply to the real engine in use.
 #
 # softRatio/hardRatio are fractions of the USABLE MESSAGE BUDGET
-# (contextWindow - request maxTokens - headroomTokens), not of the raw context
+# (contextWindow - request maxTokens - headroom), not of the raw context
 # window: a ratio above (contextWindow - maxTokens) / contextWindow can never be
 # reached, because the provider rejects the request first.
 - insert:
@@ -18,7 +18,8 @@
         protectToolResults: true
         softRatio: 0.8
         hardRatio: 0.92
-        headroomTokens: 65536
+        headroomTokens: 0
+        headroomRatio: 0.0625
         maxDeferSteps: 3
         captureMode: tool-only
         anchorDetail: 标准

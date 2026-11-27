@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
-import { join, isAbsolute, resolve } from 'node:path'
+import { promises as fs } from 'node:fs'
+import { join, dirname, isAbsolute, resolve } from 'node:path'
 import { Service } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -41,6 +42,12 @@ export const SERVICE_NAME = 'memoryCurate'
 
 const SECTION_ORDER = 750
 const ANCHOR_MAX_CHARS = 400
+/** Fields the settings UI may edit and persist as runtime overrides. */
+const UI_CONFIG_KEYS = [
+  'protectTurns', 'softRatio', 'hardRatio', 'maxDeferSteps',
+  'retrievalMode', 'embedding', 'embeddingBaseURL', 'embeddingModel',
+  'embeddingApiKeyEnv', 'embeddingWeight', 'headroomTokens', 'headroomRatio'
+]
 
 export const Config = Schema.object({
   protectTurns: Schema.number().step(1).min(1).max(20).default(5)
@@ -79,8 +86,10 @@ export const Config = Schema.object({
     .description('是否为 store 获取单写者锁；第二个 DSH 进程会降级为只读，避免并发写坏 NDJSON').volatile(),
   decayHalfLifeDays: Schema.number().step(1).min(1).max(3650).default(90)
     .description('检索时间衰减半衰期（天）；0 关闭衰减').volatile(),
-  headroomTokens: Schema.number().step(1024).min(0).max(1048576).default(65536)
-    .description('压缩压力预算里预留给摘要调用与波动的 token 数').volatile(),
+  headroomTokens: Schema.number().step(1024).min(0).max(1048576).default(0)
+    .description('绝对余量覆盖：>0 时优先于比例；0 表示按 headroomRatio 随模型大小自动计算').volatile(),
+  headroomRatio: Schema.number().step(0.001).min(0).max(1).default(0.0625)
+    .description('预算余量占上下文窗口的比例；headroomTokens=0 时生效，用于按模型大小自适应').volatile(),
   storePath: Schema.string().default('')
     .description('自定义 NDJSON 路径；留空使用 DSH_HOME/data/memory-curate/').volatile(),
   auditArchiveBytes: Schema.number().step(1048576).min(1048576).max(1073741824).default(50 * 1024 * 1024)
@@ -96,6 +105,25 @@ function resolveStorePath (configured) {
     ? process.env.DSH_HOME.trim()
     : join(homedir(), '.dsh')
   return join(home, 'data', 'memory-curate', 'memory-curate.ndjson')
+}
+
+/**
+ * Runtime overrides written by the settings UI. They sit next to the store and
+ * are merged over the loader config, so changing a field in the browser does not
+ * require editing cordis.patch.yml by hand. Non-loopback writers cannot reach it.
+ */
+function configOverridePath (storeFile) {
+  return join(dirname(storeFile), 'config-override.json')
+}
+
+async function readConfigOverride (storeFile) {
+  try {
+    const text = await fs.readFile(configOverridePath(storeFile), 'utf8')
+    const parsed = JSON.parse(text)
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 function sourceSeqsOf (session, protectTurns) {
@@ -937,8 +965,74 @@ export class CurateService extends Service {
     if (!Number.isFinite(window) || window <= 0) return null
     const reserved = Number(session?.requestHeader?.()?.config?.maxTokens)
     const reserve = Number.isFinite(reserved) && reserved > 0 ? reserved : 0
-    const budget = window - reserve - this.config.headroomTokens
+    const budget = window - reserve - this.resolveHeadroom(window)
     return budget > 0 ? budget : null
+  }
+
+  /**
+   * Headroom is an absolute reserve by default only when the user pins it.
+   * Otherwise it scales with the model's actual context window, so a 100k model
+   * does not lose ~65% of its budget to a constant tuned for a 1M model.
+   */
+  resolveHeadroom (window) {
+    const absolute = Number(this.config.headroomTokens)
+    if (Number.isFinite(absolute) && absolute > 0) return absolute
+    const ratio = Number(this.config.headroomRatio)
+    if (Number.isFinite(ratio) && ratio > 0 && Number.isFinite(window) && window > 0) {
+      return Math.max(8192, Math.round(window * ratio))
+    }
+    return 0
+  }
+
+  /** UI-facing subset of the effective config (no secrets). */
+  configSnapshot () {
+    const c = this.config
+    return {
+      retrievalMode: c.retrievalMode,
+      embeddingBaseURL: c.embeddingBaseURL,
+      embeddingModel: c.embeddingModel,
+      embeddingApiKeyEnv: c.embeddingApiKeyEnv,
+      embeddingWeight: c.embeddingWeight,
+      headroomRatio: c.headroomRatio,
+      headroomTokens: c.headroomTokens,
+      headroomFloor: 8192,
+      softRatio: c.softRatio,
+      hardRatio: c.hardRatio,
+      maxDeferSteps: c.maxDeferSteps,
+      protectTurns: c.protectTurns
+    }
+  }
+
+  /**
+   * Merge UI edits over the current config, persist them next to the store and
+   * apply them live. The embedder is rebuilt so a new endpoint/model takes effect
+   * without a restart, and the retrieval index cache is dropped for the same reason.
+   */
+  async saveConfig (partial) {
+    const clean = {}
+    for (const key of UI_CONFIG_KEYS) {
+      if (partial !== null && typeof partial === 'object' && Object.prototype.hasOwnProperty.call(partial, key)) {
+        clean[key] = partial[key]
+      }
+    }
+    const next = resolveConfig(this.config, clean)
+    if (typeof this.configPath === 'string' && this.configPath.length > 0) {
+      await fs.writeFile(this.configPath, JSON.stringify(clean, null, 2), 'utf8')
+    }
+    this.config = next
+    try { this.semantic.embedder = null } catch {}
+    if (this.indexCache instanceof Map) this.indexCache.clear()
+    if (this.sectionCache instanceof Map) this.sectionCache.clear()
+    if (this.anchorCache instanceof Map) this.anchorCache.clear()
+    if (this.anchorHashes instanceof Map) this.anchorHashes.clear()
+    await this.auditSafe('config', {
+      decision: 'updated',
+      fields: Object.keys(clean),
+      retrievalMode: next.retrievalMode,
+      actor: { kind: 'ui', id: 'settings' },
+      promptVersion: this.promptVersion()
+    })
+    return this.configSnapshot()
   }
 
   async pressureRatio (session, windowOverride) {
@@ -1622,8 +1716,10 @@ function idsHash (memories) {
 /* -------------------------------------------------------------------- entry */
 
 export async function apply (ctx, config = {}) {
-  const resolved = resolveConfig(config)
-  const storeFile = resolveStorePath(resolved.storePath)
+  const initial = resolveConfig(config)
+  const storeFile = resolveStorePath(initial.storePath)
+  const override = await readConfigOverride(storeFile)
+  const resolved = override === null ? initial : resolveConfig(config, override)
   let store = null
   let storeError = null
   let lock = null
@@ -1653,6 +1749,7 @@ export async function apply (ctx, config = {}) {
   }
 
   const service = new CurateService(ctx, resolved, store)
+  service.configPath = configOverridePath(storeFile)
   service.storeError = storeError
   service.readOnly = lock !== null && !lock.ok
   if (lock?.ok) {
@@ -1726,8 +1823,18 @@ function configValue (value, fallback) {
   return value === undefined ? fallback : value
 }
 
-export function resolveConfig (config) {
-  const value = config ?? {}
+function flattenConfig (config) {
+  if (config !== null && typeof config === 'object' && typeof config.get === 'function') {
+    const read = config.get()
+    return read !== null && typeof read === 'object' && !Array.isArray(read) ? read : {}
+  }
+  return config !== null && typeof config === 'object' && !Array.isArray(config) ? config : {}
+}
+
+export function resolveConfig (config, override = {}) {
+  const base = flattenConfig(config)
+  const extra = override !== null && typeof override === 'object' && !Array.isArray(override) ? override : {}
+  const value = { ...base, ...extra }
   const softRatio = Number(configValue(value.softRatio, 0.80))
   const hardRatio = Number(configValue(value.hardRatio, 0.92))
   if (!(softRatio > 0 && softRatio < 1) || !(hardRatio > 0 && hardRatio <= 1)) {
@@ -1755,7 +1862,8 @@ export function resolveConfig (config) {
     defaultVisibility: normalizeVisibility(configValue(value.defaultVisibility, 'shared'), 'shared'),
     singleWriter: configValue(value.singleWriter, true) !== false,
     decayHalfLifeDays: clampInt(configValue(value.decayHalfLifeDays, 90), 90, 0, 3650),
-    headroomTokens: clampInt(configValue(value.headroomTokens, 65536), 65536, 0, 1048576),
+    headroomTokens: clampInt(configValue(value.headroomTokens, 0), 0, 0, 1048576),
+    headroomRatio: clampFloat(configValue(value.headroomRatio, 0.0625), 0.0625, 0, 1),
     storePath: typeof configValue(value.storePath, '') === 'string' ? configValue(value.storePath, '') : ''
   }
 }

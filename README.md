@@ -46,7 +46,8 @@ dsh plugin --profile web add dsh-memory-curate
 | `protectToolResults` | true | 保护区内工具结果不折叠 |
 | `softRatio` | 0.80 | 软阈值：占用达到**可用消息预算**的该比例后评估记忆闸门 |
 | `hardRatio` | 0.92 | 硬阈值：达到后即使记忆不足也强制压缩 |
-| `headroomTokens` | 65536 | 预算里额外预留的安全余量（摘要调用与波动） |
+| `headroomTokens` | 0 | 绝对余量覆盖：>0 时优先于比例；0 表示按 `headroomRatio` 自动计算 |
+| `headroomRatio` | 0.0625 | 预算余量占上下文窗口的比例；按模型大小自适应，`headroomTokens=0` 时生效 |
 | `maxDeferSteps` | 3 | 连续推迟上限，超过转强制 |
 | `captureMode` | tool-only | `auto-remind` 时在候选出现后注入一次提醒 |
 | `anchorDetail` | 标准 | 锚点里每条标签显示几个触发词 |
@@ -67,7 +68,7 @@ dsh plugin --profile web add dsh-memory-curate
 
 `softRatio` 必须小于 `hardRatio`，否则插件拒绝加载。
 
-**关于阈值的口径**：`softRatio`/`hardRatio` 的分母是 `contextWindow − header.maxTokens − headroomTokens`。以 deepseek-flash 为例：上下文 1,048,576、单请求预留输出 256,000、余量 65,536，可用预算为 727,040；默认软阈值在约 58% 窗口处触发。若按裸窗口计算 0.8（838,860），会高于服务端允许的消息上限 792,576，压缩永远等不到触发。
+**关于阈值的口径**：`softRatio`/`hardRatio` 的分母是 `contextWindow − header.maxTokens − headroom`，其中 `headroom` 默认按 `headroomRatio × contextWindow` 随模型自适应（下限 **8192**；`headroomTokens=0` 时生效，置为 >0 则用绝对值覆盖）。以 deepseek-flash 为例：上下文 1,048,576、单请求预留输出 256,000，`headroomRatio=0.0625` 得余量 65,536，可用预算 727,040，默认软阈值在约 58% 窗口处触发；同样配置在 10 万上下文模型上余量按比例只有 6,250、被下限抬到 8,192，预算约 75,808，不再被固定值吃光。若按裸窗口计算 0.8（838,860），会高于服务端允许的消息上限 792,576，压缩永远等不到触发。
 
 ## 四个工具
 
@@ -117,7 +118,9 @@ dsh plugin --profile web add dsh-memory-curate
 
 ## 记忆浏览界面
 
-插件自带一个浏览器侧设置分区（`dsh.client`）与宿主只读/受控写路由：搜索、按标签过滤、查看正文/来源/审计、内联编辑（追加式 supersede）、删除（追加墓碑）。界面与命令行工具共用同一份 NDJSON 与审计，不引入第二套存储。
+插件自带一个浏览器侧设置分区（`dsh.client`）与宿主只读/受控写路由：搜索、按标签过滤、查看正文/来源/审计、内联编辑（追加式 supersede）、删除（追加墓碑），并含一个**"检索与压缩设置"表单**（检索模式、嵌入端点/模型/Key 环境变量、向量权重、余量比例、软/硬阈值），保存后即时生效。界面与命令行工具共用同一份 NDJSON 与审计，不引入第二套存储。
+
+配置表单通过 `GET/POST /plugins/dsh-memory-curate/config` 读写；改动写入 store 同目录的 `config-override.json`，下次启动时覆盖 `cordis.patch.yml` 里的同名项，所以改参数不必再手改 YAML。
 
 ## 多 agent 共享与权限
 

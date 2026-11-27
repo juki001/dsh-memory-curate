@@ -38,8 +38,8 @@ test('CM-BUDGET-02 an unheaded session reserves no completion tokens', async () 
   assert.equal(await service.pressureBudget(session), 1048576 - 65536)
 })
 
-test('CM-BUDGET-03 the configured headroom narrows the budget', async () => {
-  const service = makeCurateService({ config: { headroomTokens: 0 }, ctx: { tokenMeter: pricedMeter(10) } })
+test('CM-BUDGET-03 a zero headroom ratio removes the reserve', async () => {
+  const service = makeCurateService({ config: { headroomRatio: 0 }, ctx: { tokenMeter: pricedMeter(10) } })
   const session = new FakeSession()
   session.header = header(256000)
   assert.equal(await service.pressureBudget(session), 1048576 - 256000)
@@ -57,6 +57,14 @@ test('CM-BUDGET-05 the old window denominator would never reach 0.8', () => {
   const window = 1048576
   const ceiling = (window - 256000) / window
   assert.ok(ceiling < 0.8, `ceiling ${ceiling.toFixed(4)} must sit below the old softRatio`)
+})
+
+test('CM-BUDGET-06 headroom scales with the model window', async () => {
+  const service = makeCurateService({ ctx: { tokenMeter: pricedMeter(10) } })
+  const session = new FakeSession()
+  session.header = header(16000)
+  // 100k context, 16k completion, ratio 0.0625 -> 6,250, floored to 8,192
+  assert.equal(await service.pressureBudget(session, 100000), 100000 - 16000 - 8192)
 })
 
 function gatedEngine () {

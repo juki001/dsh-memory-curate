@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3
+
+- **Model-adaptive headroom.** `headroomTokens` was an absolute reserve (default 65536) subtracted from the usable message budget. On a 100k-context model that left only ~18k of budget (`100000 − 16000 − 65536`), so the pressure ratio sat above the hard threshold almost permanently and compaction fired on every step. A new `headroomRatio` (default `0.0625`) computes the reserve as `contextWindow × ratio` with a **floor of 8192**, so a 1M model keeps the old 65,536 (zero behavior change) while a 100k model reserves 8,192 instead of 6,250. `headroomTokens` is now an absolute override: >0 pins it, 0 (default) uses the ratio.
+- Budget formula is unchanged apart from swapping the constant for `resolveHeadroom(window)`; `CM-BUDGET-03` now asserts that `headroomRatio: 0` removes the reserve.
+- **Visual config, no YAML editing.** The settings panel gains a "检索与压缩设置" form (retrieval mode, embedding endpoint/model/key env, vector weight, headroom ratio, soft/hard ratios) backed by `GET/POST /plugins/dsh-memory-curate/config`. Edits persist to `config-override.json` next to the store and are merged over `cordis.patch.yml` at load; the embedder and retrieval index cache are rebuilt live, so switching to `hybrid` against a local `/embeddings` endpoint takes effect without a restart.
+- Docs (`README.md`, `README.en.md`, bundle `cordis.patch.yml`) updated to describe the ratio and the `headroomTokens=0` default.
+
 ## 0.3.2
 
 - **Smoother audit roll.** At the size threshold the archive now moves the oldest **40% of current audit bytes** (`auditArchiveRollRatio`, default 0.4), leaving about 60% hot instead of cutting down to the old 80%-of-threshold budget. A 50 MB store rolls to roughly 30 MB, so a production-heavy store does not re-roll immediately.

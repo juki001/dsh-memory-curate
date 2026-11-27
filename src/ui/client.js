@@ -24,6 +24,7 @@ window.__ModuleLoader__.load({
     const TRACE_PATH = `${ROUTE_BASE}/trace`
     const UPDATE_PATH = `${ROUTE_BASE}/update`
     const DELETE_PATH = `${ROUTE_BASE}/delete`
+    const CONFIG_PATH = `${ROUTE_BASE}/config`
     const KEY_HEADER = 'x-memory-curate-key'
     const SECTION_SLOT = 'settings.section'
     const SECTION_ID = 'memory-curate'
@@ -105,6 +106,8 @@ window.__ModuleLoader__.load({
       .dmc-banner { border-left: 3px solid var(--dmc-warn); border-radius: 8px; padding: 8px 12px; margin: 8px 0;
         background: color-mix(in srgb,var(--dmc-warn) 8%,transparent); }
       .dmc-delete .dmc-actions .dmc-input { flex: 1 1 220px; }
+      .dmc-config { margin-top: 16px; padding-top: 12px; border-top: 1px solid light-dark(#e5e5e5,#3a3a3a); }
+      .dmc-config > * + * { margin-top: 8px; }
       @media (max-width: 760px) {
         .dmc-body { grid-template-columns: 1fr; }
         .dmc-rows { max-height: 320px; }
@@ -307,6 +310,127 @@ window.__ModuleLoader__.load({
           ? [h('span', { key: 'label' }, '对话位置：'), h('span', { key: 'none' }, '—')]
           : [h('span', { key: 'label' }, '对话位置：'),
               ...seqs.map((seq, index) => h('span', { key: `seq-${index}`, className: 'dmc-chip' }, `#${String(seq)}`))])
+      ])
+    }
+
+    const CONFIG_FIELDS = [
+      { key: 'retrievalMode', label: '检索模式', type: 'select', options: [['bm25', 'BM25（仅词面）'], ['hybrid', 'hybrid（BM25 + 向量）']] },
+      { key: 'embeddingBaseURL', label: '嵌入端点', type: 'text', placeholder: 'http://127.0.0.1:1236/v1' },
+      { key: 'embeddingModel', label: '嵌入模型', type: 'text', placeholder: 'bge-m3' },
+      { key: 'embeddingApiKeyEnv', label: 'API Key 环境变量', type: 'text', placeholder: '本地可留空' },
+      { key: 'embeddingWeight', label: '向量权重 (0.05-0.95)', type: 'number', step: '0.05' },
+      { key: 'headroomRatio', label: '余量比例 (下限 8192)', type: 'number', step: '0.001' },
+      { key: 'softRatio', label: '软阈值', type: 'number', step: '0.01' },
+      { key: 'hardRatio', label: '硬阈值', type: 'number', step: '0.01' }
+    ]
+
+    function configPayload (form) {
+      const payload = {}
+      for (const field of CONFIG_FIELDS) {
+        const raw = form[field.key]
+        if (field.type === 'number') {
+          const number = Number(raw)
+          if (Number.isFinite(number)) payload[field.key] = number
+        } else {
+          payload[field.key] = raw
+        }
+      }
+      return payload
+    }
+
+    function ConfigPanel () {
+      const [form, setForm] = React.useState(undefined)
+      const [error, setError] = React.useState(undefined)
+      const [notice, setNotice] = React.useState(undefined)
+      const [saving, setSaving] = React.useState(false)
+      const alive = React.useRef(true)
+      React.useEffect(() => () => { alive.current = false }, [])
+
+      const load = React.useCallback(async () => {
+        try {
+          const data = await readWithKey(CONFIG_PATH)
+          if (!alive.current) return
+          if (data === null || typeof data !== 'object' || data.ok !== true) {
+            throw new Error('主机没有返回检索设置。')
+          }
+          const config = data.config ?? {}
+          const next = {}
+          for (const field of CONFIG_FIELDS) next[field.key] = config[field.key] ?? ''
+          setForm(next)
+          setError(undefined)
+        } catch (loadError) {
+          if (alive.current) setError(messageOf(loadError))
+        }
+      }, [])
+
+      React.useEffect(() => { void load() }, [load])
+
+      const setField = (key, value) => setForm((previous) => ({ ...previous, [key]: value }))
+
+      const submit = async (event) => {
+        event.preventDefault()
+        if (form === undefined) return
+        setSaving(true)
+        setError(undefined)
+        setNotice(undefined)
+        try {
+          const data = await postWithKey(CONFIG_PATH, configPayload(form))
+          if (data === null || typeof data !== 'object' || data.ok !== true) {
+            throw new Error('主机没有接受这次设置。')
+          }
+          const config = data.config ?? {}
+          const next = {}
+          for (const field of CONFIG_FIELDS) next[field.key] = config[field.key] ?? ''
+          setForm(next)
+          setNotice('已保存，即时生效。')
+        } catch (saveError) {
+          setError(messageOf(saveError))
+        } finally {
+          setSaving(false)
+        }
+      }
+
+      if (form === undefined) {
+        return h('div', { className: 'dmc-config' }, [
+          h('h3', { key: 'title' }, '检索与压缩设置'),
+          h('p', { key: 'state', className: 'dmc-muted' }, error === undefined ? '读取设置中…' : `读取失败：${error}`)
+        ])
+      }
+
+      return h('form', { className: 'dmc-config', onSubmit: submit }, [
+        h('h3', { key: 'title' }, '检索与压缩设置'),
+        h('p', { key: 'hint', className: 'dmc-muted' },
+          'hybrid 需要可用的 /embeddings 端点；余量按模型上下文比例计算，最小 8192。'),
+        h('div', { key: 'grid', className: 'dmc-grid' }, CONFIG_FIELDS.map((field) => {
+          let input
+          if (field.type === 'select') {
+            input = h('select', {
+              key: 'input', className: 'dmc-input', value: form[field.key] ?? '',
+              onChange: (event) => setField(field.key, event.target.value)
+            }, field.options.map(([value, label]) => h('option', { key: value, value }, label)))
+          } else {
+            input = h('input', {
+              key: 'input', className: 'dmc-input',
+              type: field.type === 'number' ? 'number' : 'text',
+              step: field.step ?? undefined,
+              placeholder: field.placeholder ?? '',
+              value: form[field.key] ?? '',
+              onChange: (event) => setField(field.key, event.target.value)
+            })
+          }
+          return h('label', { key: field.key, className: 'dmc-field-column' }, [
+            h('span', { key: 'label' }, field.label),
+            input
+          ])
+        })),
+        error === undefined ? null : h('div', { key: 'error', className: 'dmc-error' }, `保存失败：${error}`),
+        notice === undefined ? null : h('div', { key: 'notice', className: 'dmc-notice' }, notice),
+        h('div', { key: 'actions', className: 'dmc-actions' }, [
+          h('button', {
+            key: 'save', type: 'submit', className: 'dmc-button dmc-primary',
+            disabled: saving
+          }, saving ? '保存中…' : '保存设置')
+        ])
       ])
     }
 
@@ -704,6 +828,7 @@ window.__ModuleLoader__.load({
         notice === undefined
           ? null
           : h('div', { key: 'notice', className: 'dmc-notice', role: 'status' }, notice),
+        h(ConfigPanel, { key: 'config' }),
         h('div', { key: 'toolbar', className: 'dmc-toolbar' }, [
           h('form', {
             key: 'search', className: 'dmc-search', role: 'search',

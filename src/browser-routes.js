@@ -41,6 +41,7 @@ export const BROWSE_PATH = `${ROUTE_BASE}/browse`
 export const TRACE_PATH = `${ROUTE_BASE}/trace`
 export const UPDATE_PATH = `${ROUTE_BASE}/update`
 export const DELETE_PATH = `${ROUTE_BASE}/delete`
+export const CONFIG_PATH = `${ROUTE_BASE}/config`
 
 /** Cookie that carries the per-launch control key to the browser (mirrors plugin-health). */
 const KEY_COOKIE = 'memory_curate_key'
@@ -534,7 +535,29 @@ export function createMemoryHandlers (service, key) {
     }
   }
 
-  return { status, browse, trace, update, remove }
+  /** GET /config reads the effective config; POST /config merges and persists edits. */
+  async function config (req, res) {
+    try {
+      if (req.method === 'POST') {
+        if (!authorizeWrite(req, res, key)) return
+        callable('saveConfig')
+
+        const body = await readBody(req)
+        if (!isObject(body)) throw invalid('a JSON object body is required')
+
+        const saved = await service.saveConfig(body)
+        send(res, 200, { ok: true, config: saved })
+        return
+      }
+      if (!authorizeRead(req, res, key)) return
+      callable('configSnapshot')
+      send(res, 200, { ok: true, config: service.configSnapshot() })
+    } catch (error) {
+      failure(res, error)
+    }
+  }
+
+  return { status, browse, trace, update, remove, config }
 }
 
 /**
@@ -576,6 +599,7 @@ export function registerMemoryRoutes (ctx, service) {
             mount(TRACE_PATH, handlers.trace)
             mount(UPDATE_PATH, handlers.update)
             mount(DELETE_PATH, handlers.remove)
+            mount(CONFIG_PATH, handlers.config)
           } catch (error) {
             // A duplicate path means the route was already mounted by a stale instance.
             // Remove what this effect added, then report; never leave half a route table.
