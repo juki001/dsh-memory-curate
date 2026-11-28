@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+- **Fix mojibake in published metadata.** 0.4.1's `package.json` was rewritten by a Windows tool that decoded the UTF-8 file with the ANSI/GBK code page and saved it back as UTF-8, so `description` and `author.name` shipped double-encoded and the plugin card on the DSH UI showed garbled text. Both fields are restored.
+- **`使用说明书.md` is packaged again.** The same corruption hit the `files` array entry (`使用说明书.md` became `浣跨敤璇存槑涔?md`, the character 书 was lost to a replacement `?`), so the 31 KB Chinese user guide was silently dropped from the 0.4.1 tarball (30 files published instead of 31).
+- No runtime change: `src/` is identical to 0.4.1.
+
 ## 0.4.1
 
 - **Tool-result folding runs even when the host never asks.** The plugin owns tool-result pruning, but it only ran inside the host engine's own pre-step pressure check. A profile that disables host compaction (for example a bundle patching `compaction-basic: auto: false`) never called it, so nothing folded and the context grew into the model window. The plugin's own pre-step hook now applies the same pruning above `softRatio`, keeps the latest human turn intact, and audits each prune as `reason=pressure`.
